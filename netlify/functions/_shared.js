@@ -1,20 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
+const { createClient } = require("@supabase/supabase-js");
 
-export const supabaseAdmin = createClient(
+const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-export async function getUserFromRequest(req) {
-  const authHeader = req.headers.get("authorization") || "";
-  const token = authHeader.replace("Bearer ", "");
+async function getUserFromToken(authHeader) {
+  const token = (authHeader || "").replace("Bearer ", "");
   if (!token) return null;
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   if (error) return null;
   return data.user;
 }
 
-export async function getPrintifyKey(userId) {
+async function getPrintifyKey(userId) {
   const { data, error } = await supabaseAdmin
     .from("integrations")
     .select("api_key")
@@ -24,3 +23,5 @@ export async function getPrintifyKey(userId) {
   if (error || !data) return null;
   return data.api_key;
 }
+
+module.exports = { supabaseAdmin, getUserFromToken, getPrintifyKey };
