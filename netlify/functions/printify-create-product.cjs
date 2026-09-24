@@ -1,22 +1,23 @@
-import { supabaseAdmin, getUserFromRequest, getPrintifyKey } from "./_shared.js";
+const { supabaseAdmin, getUserFromToken, getPrintifyKey } = require("./_shared.cjs");
 
 const BASE = "https://api.printify.com/v1";
 
-export default async (req) => {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+exports.handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, body: JSON.stringify({ error: "Method not allowed" }) };
   }
-  const user = await getUserFromRequest(req);
-  if (!user) return new Response(JSON.stringify({ error: "Please sign in first." }), { status: 401 });
+  const user = await getUserFromToken(event.headers.authorization || event.headers.Authorization);
+  if (!user) return { statusCode: 401, body: JSON.stringify({ error: "Please sign in first." }) };
 
   const apiKey = await getPrintifyKey(user.id);
-  if (!apiKey) return new Response(JSON.stringify({ error: "Connect Printify first." }), { status: 400 });
+  if (!apiKey) return { statusCode: 400, body: JSON.stringify({ error: "Connect Printify first." }) };
 
-  const body = await req.json().catch(() => ({}));
+  let body;
+  try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
   const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description } = body;
 
   if (!shop_id || !blueprint_id || !print_provider_id || !variant_ids?.length || !image_url) {
-    return new Response(JSON.stringify({ error: "Missing required fields to create a product." }), { status: 400 });
+    return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields to create a product." }) };
   }
 
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -63,9 +64,9 @@ export default async (req) => {
       design_id, user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft",
     }]);
 
-    return new Response(JSON.stringify({ product }), { status: 200 });
+    return { statusCode: 200, body: JSON.stringify({ product }) };
   } catch (err) {
     console.error(err);
-    return new Response(JSON.stringify({ error: err.message || "Could not create the product." }), { status: 500 });
+    return { statusCode: 500, body: JSON.stringify({ error: err.message || "Could not create the product." }) };
   }
 };
