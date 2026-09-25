@@ -48,7 +48,7 @@ function AuthenticatedApp() {
       <GlobalStyle />
       <div className="pb2-wrap">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
-          <h1 className="pb2-title">Print<span>able</span></h1>
+          <h1 className="pb2-title">Print<span>sable</span></h1>
           <button className="pb2-nav-link" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
 
