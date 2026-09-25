@@ -1,7 +1,7 @@
 {
-  "name": "printable",
+  "name": "printsable",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "openai": "^4.56.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
