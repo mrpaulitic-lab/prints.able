@@ -87,7 +87,7 @@ export default function PublicStorefront({ slug }) {
           </div>
         )}
 
-        <p style={{ fontSize: 12, color: "#8A8072", marginTop: 40 }}>Made with Printable</p>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 40 }}>Made with Printsable</p>
       </div>
     </div>
   );
