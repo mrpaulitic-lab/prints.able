@@ -35,7 +35,7 @@ export default function AuthScreen() {
     <div className="pb2-app">
       <GlobalStyle />
       <div className="pb2-wrap" style={{ maxWidth: 380, marginTop: 80 }}>
-        <h1 className="pb2-title">Print<span>able</span></h1>
+        <h1 className="pb2-title">Print<span>sable</span></h1>
         <p style={{ fontSize: 14, color: "#5C5347", marginTop: 8 }}>
           Turn a concept into a real product, start to finish.
         </p>
