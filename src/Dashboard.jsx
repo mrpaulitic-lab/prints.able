@@ -2,10 +2,11 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { slugify } from "./slugify";
 
-export default function Dashboard({ session, onOpenPush }) {
+export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
   const [brands, setBrands] = useState([]);
   const [designsByBrand, setDesignsByBrand] = useState({});
   const [sitesByBrand, setSitesByBrand] = useState({});
+  const [productsByDesign, setProductsByDesign] = useState({});
   const [loading, setLoading] = useState(true);
   const [busySiteFor, setBusySiteFor] = useState(null);
 
@@ -39,6 +40,14 @@ export default function Dashboard({ session, onOpenPush }) {
     (siteData || []).forEach((s) => { groupedSites[s.brand_id] = s; });
     setSitesByBrand(groupedSites);
 
+    const { data: productData } = await supabase.from("products").select("*");
+    const groupedProducts = {};
+    (productData || []).forEach((p) => {
+      if (!groupedProducts[p.design_id]) groupedProducts[p.design_id] = [];
+      groupedProducts[p.design_id].push(p);
+    });
+    setProductsByDesign(groupedProducts);
+
     setLoading(false);
   }
 
@@ -69,12 +78,12 @@ export default function Dashboard({ session, onOpenPush }) {
     }
   }
 
-  if (loading) return <p style={{ color: "#8A8072" }}>Loading your brands…</p>;
+  if (loading) return <p style={{ color: "var(--muted)" }}>Loading your brands…</p>;
 
   if (brands.length === 0) {
     return (
       <div className="pb2-card">
-        <p style={{ color: "#8A8072", margin: 0 }}>
+        <p style={{ color: "var(--muted)", margin: 0 }}>
           Nothing saved yet — generate your first brand in the Studio tab.
         </p>
       </div>
@@ -89,31 +98,47 @@ export default function Dashboard({ session, onOpenPush }) {
         const site = sitesByBrand[b.id];
         const isPublished = site?.published;
         const siteUrl = site ? `${window.location.origin}/b/${site.slug}` : null;
+        const products = mainDesign ? productsByDesign[mainDesign.id] || [] : [];
+        const allProductImages = products.flatMap((p) => p.images || []);
 
         return (
           <div key={b.id} className="pb2-card">
-            <h3 style={{ fontFamily: "'Anton', sans-serif", fontSize: 22, textTransform: "uppercase", margin: 0 }}>
+            <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, margin: 0 }}>
               {b.brand_name}
             </h3>
-            <p style={{ fontStyle: "italic", color: "#5C5347", margin: "4px 0 10px" }}>{b.tagline}</p>
+            <p style={{ fontStyle: "italic", color: "var(--muted)", margin: "4px 0 10px" }}>{b.tagline}</p>
             {mainDesign?.image_url && (
               <img
                 src={mainDesign.image_url}
                 alt={b.brand_name}
-                style={{ width: 140, borderRadius: 4, border: "2px solid var(--ink)", marginBottom: 12 }}
+                style={{ width: 140, borderRadius: 10, border: "1px solid var(--panel-border)", marginBottom: 12 }}
               />
+            )}
+
+            {allProductImages.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div className="pb2-hint" style={{ marginBottom: 6 }}>Real product photos from Printify:</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {allProductImages.slice(0, 4).map((img, i) => (
+                    <img key={i} src={img} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
+                  ))}
+                </div>
+              </div>
             )}
 
             {isPublished && siteUrl && (
               <p style={{ fontSize: 13, marginBottom: 12 }}>
                 Live at:{" "}
-                <a href={siteUrl} target="_blank" rel="noreferrer" style={{ color: "var(--red)" }}>
+                <a href={siteUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent2)" }}>
                   {siteUrl}
                 </a>
               </p>
             )}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="pb2-btn pb2-btn-ghost" onClick={() => onOpenEdit(b)}>
+                Edit
+              </button>
               {mainDesign && (
                 <button className="pb2-btn" onClick={() => onOpenPush(b, mainDesign)}>
                   Push to Printify
