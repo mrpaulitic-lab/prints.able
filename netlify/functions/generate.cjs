@@ -36,6 +36,10 @@ exports.handler = async (event) => {
   }
 
   const prompt = (body.prompt || "").trim();
+  const audience = (body.audience || "").trim();
+  const style = (body.style || "").trim();
+  const productTypes = Array.isArray(body.productTypes) ? body.productTypes.filter(Boolean) : [];
+
   if (!prompt || prompt.length < 5) {
     return { statusCode: 400, body: JSON.stringify({ error: "Tell us a bit more about your idea." }) };
   }
@@ -61,9 +65,12 @@ exports.handler = async (event) => {
     };
   }
 
-  // Ask for a quick, rough image prompt first with a tiny, fast call, so the
-  // slower image generation can start at the same time as the main text call
-  // instead of waiting for it to finish first.
+  const contextLines = [`Idea: ${prompt}`];
+  if (audience) contextLines.push(`Target audience: ${audience}`);
+  if (style) contextLines.push(`Style/vibe: ${style}`);
+  if (productTypes.length) contextLines.push(`Focus the merch collection on these product types: ${productTypes.join(", ")}`);
+  const fullContext = contextLines.join("\n");
+
   let quickImagePrompt = `A simple logo concept for a brand about: ${prompt}`;
   try {
     const quick = await openai.chat.completions.create({
@@ -71,9 +78,9 @@ exports.handler = async (event) => {
       messages: [
         {
           role: "system",
-          content: "In one short sentence, describe a simple logo/graphic concept (no text or letters) for this business idea.",
+          content: "In one short sentence, describe a simple logo/graphic concept (no text or letters) for this business idea, matching any stated style.",
         },
-        { role: "user", content: prompt },
+        { role: "user", content: fullContext },
       ],
       max_tokens: 60,
     });
@@ -82,10 +89,6 @@ exports.handler = async (event) => {
     console.error("Quick image prompt failed, using fallback:", err);
   }
 
-  // Now run the full brand text generation AND the image generation
-  // at the same time instead of one after another — this is what actually
-  // fixes the timeout, since the total wait becomes the slower of the two
-  // instead of the sum of both.
   const textPromise = openai.chat.completions.create({
     model: "gpt-4o-mini",
     response_format: { type: "json_object" },
@@ -94,14 +97,16 @@ exports.handler = async (event) => {
         role: "system",
         content:
           "You help small business owners and creators launch print-on-demand merch brands. " +
+          "Use the target audience and style, when given, to make every part of the output specific " +
+          "and tailored — avoid generic phrasing. If product types are specified, build the merch " +
+          "collection around those types specifically. " +
           "Return ONLY a JSON object with this exact shape: " +
           '{"brand_name": string, "tagline": string, "mission": string, ' +
           '"merch_collection": [{"item": string, "description": string}], ' +
           '"marketing": {"instagram": string, "facebook": string, "email": string}, ' +
-          '"launch_strategy": [string], "revenue_opportunities": [string]}. ' +
-          "Be concrete and specific to what the user described, not generic.",
+          '"launch_strategy": [string], "revenue_opportunities": [string]}.',
       },
-      { role: "user", content: prompt },
+      { role: "user", content: fullContext },
     ],
   });
 
@@ -126,6 +131,14 @@ exports.handler = async (event) => {
     console.error("Could not parse brand JSON:", err);
     return { statusCode: 500, body: JSON.stringify({ error: "Generation failed. Try again shortly." }) };
   }
+
+  // Every merch item starts included on the public page by default;
+  // the owner can uncheck ones they don't want shown, from the Edit screen.
+  const merchWithInclusion = (brandPackage.merch_collection || []).map((m) => ({
+    ...m,
+    included: true,
+  }));
+  brandPackage.merch_collection = merchWithInclusion;
 
   let imageUrl = null;
   if (imageResult.status === "fulfilled") {
