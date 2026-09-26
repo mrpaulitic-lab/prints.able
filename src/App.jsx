@@ -4,6 +4,7 @@ import GlobalStyle from "./GlobalStyle";
 import AuthScreen from "./AuthScreen";
 import Studio from "./Studio";
 import Dashboard from "./Dashboard";
+import EditBrand from "./EditBrand";
 import ConnectPrintify from "./ConnectPrintify";
 import PushToPrintify from "./PushToPrintify";
 import PublicStorefront from "./PublicStorefront";
@@ -29,6 +30,7 @@ function AuthenticatedApp() {
   const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState("studio");
   const [pushTarget, setPushTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
   const [dashboardKey, setDashboardKey] = useState(0);
 
   useEffect(() => {
@@ -71,6 +73,15 @@ function AuthenticatedApp() {
             key={dashboardKey}
             session={session}
             onOpenPush={(brand, design) => { setPushTarget({ brand, design }); setTab("push"); }}
+            onOpenEdit={(brand) => { setEditTarget(brand); setTab("edit"); }}
+          />
+        )}
+
+        {tab === "edit" && editTarget && (
+          <EditBrand
+            brand={editTarget}
+            onSaved={() => { setTab("dashboard"); setDashboardKey((k) => k + 1); }}
+            onCancel={() => setTab("dashboard")}
           />
         )}
 
