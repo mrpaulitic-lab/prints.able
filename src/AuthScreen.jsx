@@ -2,6 +2,12 @@ import React, { useState } from "react";
 import { supabase } from "./supabaseClient";
 import GlobalStyle from "./GlobalStyle";
 
+const EXAMPLES = [
+  { idea: "Coffee brand for night-shift nurses", brand: "Graveyard Grounds", tagline: "Fuel for the shift nobody sees" },
+  { idea: "Merch for plant parents who kill everything", brand: "Serial Killer Succulents", tagline: "We've all been there" },
+  { idea: "Running club for slow, happy joggers", brand: "Last Place Club", tagline: "We finish. That's the whole plan." },
+];
+
 export default function AuthScreen() {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
@@ -34,9 +40,9 @@ export default function AuthScreen() {
   return (
     <div className="pb2-app">
       <GlobalStyle />
-      <div className="pb2-wrap" style={{ maxWidth: 380, marginTop: 80 }}>
+      <div className="pb2-wrap" style={{ maxWidth: 420, marginTop: 60 }}>
         <h1 className="pb2-title">Print<span>sable</span></h1>
-        <p style={{ fontSize: 14, color: "#5C5347", marginTop: 8 }}>
+        <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 8 }}>
           Turn a concept into a real product, start to finish.
         </p>
 
@@ -59,6 +65,15 @@ export default function AuthScreen() {
         >
           {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
         </button>
+
+        <div className="pb2-section-label" style={{ marginTop: 36, textAlign: "center" }}>What Printsable can make</div>
+        {EXAMPLES.map((ex, i) => (
+          <div key={i} className="pb2-card" style={{ marginTop: 12 }}>
+            <div className="pb2-hint" style={{ marginBottom: 6 }}>Idea: "{ex.idea}"</div>
+            <strong style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16 }}>{ex.brand}</strong>
+            <p style={{ fontStyle: "italic", color: "var(--muted)", margin: "2px 0 0", fontSize: 14 }}>{ex.tagline}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
