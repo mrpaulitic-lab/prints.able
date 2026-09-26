@@ -60,8 +60,12 @@ exports.handler = async (event) => {
     }
     const product = await productResp.json();
 
+    // Printify generates real photo mockups (design shown on an actual
+    // product photo) — grab those URLs so we can display them.
+    const images = (product.images || []).map((img) => img.src).filter(Boolean);
+
     await supabaseAdmin.from("products").insert([{
-      design_id, user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft",
+      design_id, user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft", images,
     }]);
 
     return { statusCode: 200, body: JSON.stringify({ product }) };
