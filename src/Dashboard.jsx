@@ -9,6 +9,9 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
   const [productsByDesign, setProductsByDesign] = useState({});
   const [loading, setLoading] = useState(true);
   const [busySiteFor, setBusySiteFor] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [refreshingId, setRefreshingId] = useState(null);
+  const [refreshError, setRefreshError] = useState("");
 
   useEffect(() => {
     load();
@@ -54,19 +57,13 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
   async function togglePublish(brand) {
     setBusySiteFor(brand.id);
     const existing = sitesByBrand[brand.id];
-
     try {
       if (existing) {
-        const { error } = await supabase
-          .from("sites")
-          .update({ published: !existing.published })
-          .eq("id", existing.id);
+        const { error } = await supabase.from("sites").update({ published: !existing.published }).eq("id", existing.id);
         if (error) throw error;
       } else {
         const slug = slugify(brand.brand_name);
-        const { error } = await supabase
-          .from("sites")
-          .insert([{ brand_id: brand.id, user_id: session.user.id, slug, published: true }]);
+        const { error } = await supabase.from("sites").insert([{ brand_id: brand.id, user_id: session.user.id, slug, published: true }]);
         if (error) throw error;
       }
       await load();
@@ -75,6 +72,29 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
       alert("Could not update your site right now. Try again.");
     } finally {
       setBusySiteFor(null);
+    }
+  }
+
+  async function refreshMarketing(brandId) {
+    setRefreshingId(brandId);
+    setRefreshError("");
+    try {
+      const { data: { session: freshSession } } = await supabase.auth.getSession();
+      const res = await fetch("/.netlify/functions/refresh-marketing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshSession.access_token}` },
+        body: JSON.stringify({ brand_id: brandId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRefreshError(data.message || data.error || "Could not refresh content.");
+        return;
+      }
+      setBrands((prev) => prev.map((b) => (b.id === brandId ? { ...b, marketing: data.marketing } : b)));
+    } catch (err) {
+      setRefreshError("Network error — try again.");
+    } finally {
+      setRefreshingId(null);
     }
   }
 
@@ -100,6 +120,7 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
         const siteUrl = site ? `${window.location.origin}/b/${site.slug}` : null;
         const products = mainDesign ? productsByDesign[mainDesign.id] || [] : [];
         const allProductImages = products.flatMap((p) => p.images || []);
+        const isExpanded = expandedId === b.id;
 
         return (
           <div key={b.id} className="pb2-card">
@@ -128,30 +149,84 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
 
             {isPublished && siteUrl && (
               <p style={{ fontSize: 13, marginBottom: 12 }}>
-                Live at:{" "}
-                <a href={siteUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent2)" }}>
-                  {siteUrl}
-                </a>
+                Live at: <a href={siteUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent2)" }}>{siteUrl}</a>
               </p>
             )}
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="pb2-btn pb2-btn-ghost" onClick={() => onOpenEdit(b)}>
-                Edit
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: isExpanded ? 18 : 0 }}>
+              <button className="pb2-btn pb2-btn-ghost" onClick={() => setExpandedId(isExpanded ? null : b.id)}>
+                {isExpanded ? "Hide full details" : "View full details"}
               </button>
+              <button className="pb2-btn pb2-btn-ghost" onClick={() => onOpenEdit(b)}>Edit</button>
               {mainDesign && (
-                <button className="pb2-btn" onClick={() => onOpenPush(b, mainDesign)}>
-                  Push to Printify
-                </button>
+                <button className="pb2-btn" onClick={() => onOpenPush(b, mainDesign)}>Push to Printify</button>
               )}
-              <button
-                className="pb2-btn pb2-btn-ghost"
-                disabled={busySiteFor === b.id}
-                onClick={() => togglePublish(b)}
-              >
+              <button className="pb2-btn pb2-btn-ghost" disabled={busySiteFor === b.id} onClick={() => togglePublish(b)}>
                 {busySiteFor === b.id ? "Working…" : isPublished ? "Unpublish site" : "Publish site"}
               </button>
             </div>
+
+            {isExpanded && (
+              <div style={{ borderTop: "1px solid var(--panel-border)", paddingTop: 16 }}>
+                <p style={{ fontSize: 14, lineHeight: 1.6 }}>{b.mission}</p>
+
+                {b.merch_collection?.length > 0 && (
+                  <>
+                    <div className="pb2-section-label">Merch Collection</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 16 }}>
+                      {b.merch_collection.map((m, i) => (
+                        <div key={i} style={{ border: "1px solid var(--panel-border)", borderRadius: 8, padding: 10, opacity: m.included === false ? 0.5 : 1 }}>
+                          <strong style={{ display: "block", fontSize: 13 }}>{m.item}</strong>
+                          <p style={{ fontSize: 12, margin: 0, color: "var(--muted)" }}>{m.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="pb2-section-label" style={{ marginBottom: 0 }}>Marketing Copy</div>
+                  <button
+                    className="pb2-btn pb2-btn-ghost"
+                    style={{ fontSize: 12, padding: "6px 10px" }}
+                    disabled={refreshingId === b.id}
+                    onClick={() => refreshMarketing(b.id)}
+                  >
+                    {refreshingId === b.id ? "Generating…" : "🔄 Refresh content"}
+                  </button>
+                </div>
+                <p className="pb2-hint" style={{ marginTop: 4 }}>
+                  This is draft copy for you to post yourself — any email or link mentioned here isn't live; it's a suggestion, not real infrastructure.
+                </p>
+                {refreshError && <div className="pb2-error">{refreshError}</div>}
+                {["instagram", "facebook", "email"].map((k) =>
+                  b.marketing?.[k] ? (
+                    <div key={k} style={{ marginTop: 10 }}>
+                      <strong style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, textTransform: "uppercase" }}>{k}</strong>
+                      <p style={{ fontSize: 13, whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{b.marketing[k]}</p>
+                    </div>
+                  ) : null
+                )}
+
+                {b.launch_strategy?.length > 0 && (
+                  <>
+                    <div className="pb2-section-label" style={{ marginTop: 16 }}>Launch Strategy</div>
+                    <ol style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 18 }}>
+                      {b.launch_strategy.map((s, i) => <li key={i}>{s}</li>)}
+                    </ol>
+                  </>
+                )}
+
+                {b.revenue_opportunities?.length > 0 && (
+                  <>
+                    <div className="pb2-section-label">Revenue Opportunities</div>
+                    <ul style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 18 }}>
+                      {b.revenue_opportunities.map((r, i) => <li key={i}>{r}</li>)}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
