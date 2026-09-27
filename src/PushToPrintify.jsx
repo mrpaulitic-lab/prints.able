@@ -19,7 +19,9 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
   const [shops, setShops] = useState([]);
   const [shopId, setShopId] = useState(null);
   const [blueprints, setBlueprints] = useState([]);
+  const [blueprintSearch, setBlueprintSearch] = useState("");
   const [blueprintId, setBlueprintId] = useState(null);
+  const [selectedBlueprintTitle, setSelectedBlueprintTitle] = useState("");
   const [providers, setProviders] = useState([]);
   const [providerId, setProviderId] = useState(null);
   const [variants, setVariants] = useState([]);
@@ -57,9 +59,10 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
     }
   }
 
-  async function loadProviders(bpId) {
+  async function loadProviders(bpId, bpTitle) {
     setError("");
     setBlueprintId(bpId);
+    setSelectedBlueprintTitle(bpTitle);
     setStep("loading-catalog");
     try {
       const data = await authedFetch("/.netlify/functions/printify-catalog", {
@@ -112,8 +115,20 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
     }
   }
 
+  const filteredBlueprints = blueprintSearch.trim()
+    ? blueprints.filter((bp) => bp.title.toLowerCase().includes(blueprintSearch.trim().toLowerCase()))
+    : blueprints.slice(0, 40);
+
   return (
     <div className="pb2-card">
+      <button
+        className="pb2-btn-ghost"
+        style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, padding: 0, marginBottom: 14, cursor: "pointer" }}
+        onClick={onDone}
+      >
+        ← Back to My Brands
+      </button>
+
       <div className="pb2-section-label">Push "{brand.brand_name}" to Printify</div>
       {error && <div className="pb2-error">{error}</div>}
 
@@ -136,26 +151,43 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
 
       {step === "pick-blueprint" && (
         <>
+          <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-shop")}>
+            ← Back
+          </button>
           <label className="pb2-label">What kind of product?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
-            {blueprints.slice(0, 30).map((bp) => (
+          <input
+            className="pb2-input"
+            placeholder="Search products (e.g. sticker, poster, mug)…"
+            value={blueprintSearch}
+            onChange={(e) => setBlueprintSearch(e.target.value)}
+            style={{ marginBottom: 12 }}
+          />
+          <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+            {filteredBlueprints.map((bp) => (
               <button
                 key={bp.id}
                 className="pb2-btn pb2-btn-ghost"
                 style={{ fontSize: 12, textAlign: "left", padding: "10px 12px" }}
-                onClick={() => loadProviders(bp.id)}
+                onClick={() => loadProviders(bp.id, bp.title)}
               >
                 {bp.title}
               </button>
             ))}
           </div>
-          <p className="pb2-hint">Showing the first 30 — Printify's full catalog has many more.</p>
+          <p className="pb2-hint">
+            {blueprintSearch.trim()
+              ? `${filteredBlueprints.length} match${filteredBlueprints.length === 1 ? "" : "es"}`
+              : `Showing the first 40 of ${blueprints.length} — search above to find more, like "poster," "sticker," or "postcard."`}
+          </p>
         </>
       )}
 
       {step === "pick-provider" && (
         <>
-          <label className="pb2-label">Which print provider?</label>
+          <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-blueprint")}>
+            ← Back
+          </button>
+          <label className="pb2-label">Which print provider for "{selectedBlueprintTitle}"?</label>
           <p className="pb2-hint" style={{ marginTop: 0 }}>Different providers mean different prices, locations, and blank quality.</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {providers.map((p) => (
@@ -169,8 +201,11 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
 
       {step === "pick-variants" && (
         <>
+          <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-provider")}>
+            ← Back
+          </button>
           <label className="pb2-label">Which sizes/colors to include?</label>
-          <div style={{ maxHeight: 240, overflowY: "auto", border: "1.5px solid var(--line)", borderRadius: 4, padding: 10 }}>
+          <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--panel-border)", borderRadius: 10, padding: 10 }}>
             {variants.map((v) => (
               <label key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0" }}>
                 <input
