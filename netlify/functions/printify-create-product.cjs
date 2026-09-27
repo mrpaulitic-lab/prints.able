@@ -14,12 +14,13 @@ exports.handler = async (event) => {
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
-  const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description } = body;
+  const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description, price_cents } = body;
 
   if (!shop_id || !blueprint_id || !print_provider_id || !variant_ids?.length || !image_url) {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields to create a product." }) };
   }
 
+  const finalPrice = Number.isInteger(price_cents) && price_cents > 0 ? price_cents : 2000;
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
   try {
@@ -42,7 +43,7 @@ exports.handler = async (event) => {
         description: description || "",
         blueprint_id,
         print_provider_id,
-        variants: variant_ids.map((id) => ({ id, price: 2000, is_enabled: true })),
+        variants: variant_ids.map((id) => ({ id, price: finalPrice, is_enabled: true })),
         print_areas: [
           {
             variant_ids,
@@ -59,9 +60,6 @@ exports.handler = async (event) => {
       throw new Error(`Printify rejected the product: ${errText}`);
     }
     const product = await productResp.json();
-
-    // Printify generates real photo mockups (design shown on an actual
-    // product photo) — grab those URLs so we can display them.
     const images = (product.images || []).map((img) => img.src).filter(Boolean);
 
     await supabaseAdmin.from("products").insert([{
