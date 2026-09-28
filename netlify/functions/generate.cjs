@@ -18,6 +18,27 @@ async function getUserFromToken(authHeader) {
   return data.user;
 }
 
+// Saves the image in Supabase Storage and returns a short public link.
+// Returns null if storage isn't set up, so the caller can fall back.
+async function saveImage(userId, b64) {
+  try {
+    const buffer = Buffer.from(b64, "base64");
+    const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    const { error } = await supabaseAdmin.storage
+      .from("designs")
+      .upload(path, buffer, { contentType: "image/png" });
+    if (error) {
+      console.error("Storage upload failed:", error);
+      return null;
+    }
+    const { data } = supabaseAdmin.storage.from("designs").getPublicUrl(path);
+    return data.publicUrl;
+  } catch (err) {
+    console.error("Storage upload crashed:", err);
+    return null;
+  }
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: JSON.stringify({ error: "Method not allowed" }) };
@@ -100,9 +121,12 @@ exports.handler = async (event) => {
           "Use the target audience and style, when given, to make every part of the output specific " +
           "and tailored — avoid generic phrasing. If product types are specified, build the merch " +
           "collection around those types specifically. " +
+          "For every merch item, include a design_prompt: one short sentence describing the artwork " +
+          "to print on that specific product (graphic only, no text or letters), fitting the brand style " +
+          "and different from the other items' artwork. " +
           "Return ONLY a JSON object with this exact shape: " +
           '{"brand_name": string, "tagline": string, "mission": string, ' +
-          '"merch_collection": [{"item": string, "description": string}], ' +
+          '"merch_collection": [{"item": string, "description": string, "design_prompt": string}], ' +
           '"marketing": {"instagram": string, "facebook": string, "email": string}, ' +
           '"launch_strategy": [string], "revenue_opportunities": [string]}.',
       },
@@ -132,18 +156,17 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: "Generation failed. Try again shortly." }) };
   }
 
-  // Every merch item starts included on the public page by default;
-  // the owner can uncheck ones they don't want shown, from the Edit screen.
-  const merchWithInclusion = (brandPackage.merch_collection || []).map((m) => ({
+  brandPackage.merch_collection = (brandPackage.merch_collection || []).map((m) => ({
     ...m,
     included: true,
   }));
-  brandPackage.merch_collection = merchWithInclusion;
 
   let imageUrl = null;
   if (imageResult.status === "fulfilled") {
     const b64 = imageResult.value.data[0]?.b64_json;
-    imageUrl = b64 ? `data:image/png;base64,${b64}` : null;
+    if (b64) {
+      imageUrl = (await saveImage(user.id, b64)) || `data:image/png;base64,${b64}`;
+    }
   } else {
     console.error("OpenAI image generation failed:", imageResult.reason);
   }
@@ -174,6 +197,7 @@ exports.handler = async (event) => {
         user_id: user.id,
         image_url: imageUrl,
         image_prompt: quickImagePrompt,
+        label: "Brand logo",
       }]);
     if (designInsertError) console.error(designInsertError);
   }
@@ -189,6 +213,7 @@ exports.handler = async (event) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ...brandPackage,
+      brand_id: savedBrand ? savedBrand.id : null,
       image_url: imageUrl,
       generations_remaining:
         profile.plan === "free" ? FREE_GENERATION_LIMIT - (profile.generation_count + 1) : null,
