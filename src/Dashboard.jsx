@@ -30,7 +30,10 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
     }
     setBrands(brandData || []);
 
-    const { data: designData } = await supabase.from("designs").select("*").order("created_at", { ascending: false });
+    const { data: designData } = await supabase
+      .from("designs")
+      .select("*")
+      .order("created_at", { ascending: true });
     const groupedDesigns = {};
     (designData || []).forEach((d) => {
       if (!groupedDesigns[d.brand_id]) groupedDesigns[d.brand_id] = [];
@@ -114,33 +117,45 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
     <div>
       {brands.map((b) => {
         const designs = designsByBrand[b.id] || [];
-        const mainDesign = designs[0];
         const site = sitesByBrand[b.id];
         const isPublished = site?.published;
         const siteUrl = site ? `${window.location.origin}/b/${site.slug}` : null;
-        const products = mainDesign ? productsByDesign[mainDesign.id] || [] : [];
-        const allProductImages = products.flatMap((p) => p.images || []);
+        const allProductImages = designs.flatMap((d) =>
+          (productsByDesign[d.id] || []).flatMap((p) => p.images || [])
+        );
         const isExpanded = expandedId === b.id;
 
         return (
           <div key={b.id} className="pb2-card">
-            <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, margin: 0 }}>
-              {b.brand_name}
-            </h3>
+            <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, margin: 0 }}>{b.brand_name}</h3>
             <p style={{ fontStyle: "italic", color: "var(--muted)", margin: "4px 0 10px" }}>{b.tagline}</p>
-            {mainDesign?.image_url && (
-              <img
-                src={mainDesign.image_url}
-                alt={b.brand_name}
-                style={{ width: 140, borderRadius: 10, border: "1px solid var(--panel-border)", marginBottom: 12 }}
-              />
+
+            {designs.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div className="pb2-hint" style={{ marginBottom: 8 }}>Your designs — push any one to Printify:</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+                  {designs.map((d) => (
+                    <div key={d.id}>
+                      <img src={d.image_url} alt={d.label || "Design"} style={{ width: "100%", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
+                      <div className="pb2-hint" style={{ margin: "4px 0" }}>{d.label || "Design"}</div>
+                      <button
+                        className="pb2-btn"
+                        style={{ fontSize: 12, padding: "6px 10px", width: "100%" }}
+                        onClick={() => onOpenPush(b, d)}
+                      >
+                        Push to Printify
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {allProductImages.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div className="pb2-hint" style={{ marginBottom: 6 }}>Real product photos from Printify:</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {allProductImages.slice(0, 4).map((img, i) => (
+                  {allProductImages.slice(0, 6).map((img, i) => (
                     <img key={i} src={img} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
                   ))}
                 </div>
@@ -158,9 +173,6 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
                 {isExpanded ? "Hide full details" : "View full details"}
               </button>
               <button className="pb2-btn pb2-btn-ghost" onClick={() => onOpenEdit(b)}>Edit</button>
-              {mainDesign && (
-                <button className="pb2-btn" onClick={() => onOpenPush(b, mainDesign)}>Push to Printify</button>
-              )}
               <button className="pb2-btn pb2-btn-ghost" disabled={busySiteFor === b.id} onClick={() => togglePublish(b)}>
                 {busySiteFor === b.id ? "Working…" : isPublished ? "Unpublish site" : "Publish site"}
               </button>
@@ -186,12 +198,7 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div className="pb2-section-label" style={{ marginBottom: 0 }}>Marketing Copy</div>
-                  <button
-                    className="pb2-btn pb2-btn-ghost"
-                    style={{ fontSize: 12, padding: "6px 10px" }}
-                    disabled={refreshingId === b.id}
-                    onClick={() => refreshMarketing(b.id)}
-                  >
+                  <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} disabled={refreshingId === b.id} onClick={() => refreshMarketing(b.id)}>
                     {refreshingId === b.id ? "Generating…" : "🔄 Refresh content"}
                   </button>
                 </div>
@@ -217,7 +224,7 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
                   </>
                 )}
 
-                                {b.revenue_opportunities?.length > 0 && (
+                {b.revenue_opportunities?.length > 0 && (
                   <>
                     <div className="pb2-section-label">Revenue Opportunities</div>
                     <ul style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 18 }}>
