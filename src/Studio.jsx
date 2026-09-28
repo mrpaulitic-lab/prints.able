@@ -11,6 +11,9 @@ export default function Studio({ session, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [extraDesigns, setExtraDesigns] = useState([]);
+  const [designProgress, setDesignProgress] = useState("");
+  const [designFailures, setDesignFailures] = useState(0);
 
   function toggleType(type) {
     setSelectedTypes((prev) =>
@@ -18,10 +21,43 @@ export default function Studio({ session, onSaved }) {
     );
   }
 
+  async function generateExtraDesigns(brandId, merch) {
+    const count = Math.min(3, merch.length);
+    let failures = 0;
+    for (let i = 0; i < count; i++) {
+      setDesignProgress(`Creating product design ${i + 1} of ${count}…`);
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession();
+        const res = await fetch("/.netlify/functions/generate-design", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${s.access_token}`,
+          },
+          body: JSON.stringify({ brand_id: brandId, item_index: i }),
+        });
+        const data = await res.json();
+        if (res.ok && data.design) {
+          setExtraDesigns((prev) => [...prev, data.design]);
+        } else {
+          failures += 1;
+        }
+      } catch (err) {
+        failures += 1;
+      }
+    }
+    setDesignFailures(failures);
+    setDesignProgress("");
+    if (onSaved) onSaved();
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setResult(null);
+    setExtraDesigns([]);
+    setDesignFailures(0);
+    setDesignProgress("");
     setBusy(true);
     try {
       const { data: { session: freshSession } } = await supabase.auth.getSession();
@@ -40,6 +76,9 @@ export default function Studio({ session, onSaved }) {
       }
       setResult(data);
       if (onSaved) onSaved();
+      if (data.brand_id && (data.merch_collection || []).length > 0) {
+        generateExtraDesigns(data.brand_id, data.merch_collection);
+      }
     } catch (err) {
       setError("Network error — try again.");
     } finally {
@@ -120,10 +159,34 @@ export default function Studio({ session, onSaved }) {
             {result.image_url && (
               <img
                 src={result.image_url}
-                alt="Concept design"
+                alt="Brand logo concept"
                 style={{ width: "100%", maxWidth: 280, display: "block", margin: "16px auto", borderRadius: 12, border: "1px solid var(--panel-border)" }}
               />
             )}
+          </div>
+
+          <div className="pb2-card">
+            <div className="pb2-section-label">Product Designs</div>
+            {extraDesigns.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                {extraDesigns.map((d) => (
+                  <div key={d.id}>
+                    <img src={d.image_url} alt={d.label} style={{ width: "100%", borderRadius: 10, border: "1px solid var(--panel-border)" }} />
+                    <div className="pb2-hint" style={{ marginTop: 4 }}>{d.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {designProgress && <p className="pb2-hint" style={{ marginTop: 10 }}>{designProgress}</p>}
+            {!designProgress && extraDesigns.length === 0 && (
+              <p className="pb2-hint">No extra designs were created this time.</p>
+            )}
+            {designFailures > 0 && !designProgress && (
+              <p className="pb2-hint">{designFailures} design{designFailures === 1 ? "" : "s"} couldn't be created this time.</p>
+            )}
+            <p className="pb2-hint" style={{ marginTop: 10 }}>
+              All designs are saved in "My Brands," where you can push any one of them to Printify.
+            </p>
           </div>
 
           <div className="pb2-card">
