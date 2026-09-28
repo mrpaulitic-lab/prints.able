@@ -48,7 +48,15 @@ export default function PublicStorefront({ slug }) {
       setProducts(productData || []);
     }
 
-    setStatus("found");
+        setStatus("found");
+    document.title = `${brandData?.brand_name || "Brand"} — ${brandData?.tagline || "Made with Printsable"}`;
+    let metaDesc = document.querySelector('meta[name="description"]');
+    if (!metaDesc) {
+      metaDesc = document.createElement("meta");
+      metaDesc.name = "description";
+      document.head.appendChild(metaDesc);
+    }
+    metaDesc.content = (brandData?.mission || "").slice(0, 160);
   }
 
   if (status === "loading") {
