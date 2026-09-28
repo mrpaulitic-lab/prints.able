@@ -217,7 +217,7 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
                   </>
                 )}
 
-                {b.revenue_opportunities?.length > 0 && (
+                                {b.revenue_opportunities?.length > 0 && (
                   <>
                     <div className="pb2-section-label">Revenue Opportunities</div>
                     <ul style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 18 }}>
@@ -225,6 +225,22 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
                     </ul>
                   </>
                 )}
+
+                <div className="pb2-section-label" style={{ marginTop: 16 }}>Recommended Next Steps</div>
+                <p className="pb2-hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                  Third-party services some sellers use when making a brand official — not required, and not audited by Printsable.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <a href="https://www.zenbusiness.com/" target="_blank" rel="noreferrer" className="pb2-btn pb2-btn-ghost" style={{ textAlign: "left", textDecoration: "none" }}>
+                    Register an LLC — ZenBusiness
+                  </a>
+                  <a href="https://mercury.com/" target="_blank" rel="noreferrer" className="pb2-btn pb2-btn-ghost" style={{ textAlign: "left", textDecoration: "none" }}>
+                    Open a business bank account — Mercury
+                  </a>
+                  <a href="https://www.namecheap.com/" target="_blank" rel="noreferrer" className="pb2-btn pb2-btn-ghost" style={{ textAlign: "left", textDecoration: "none" }}>
+                    Register a domain — Namecheap
+                  </a>
+                </div>
               </div>
             )}
           </div>
