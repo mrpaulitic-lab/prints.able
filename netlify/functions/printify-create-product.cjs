@@ -24,10 +24,20 @@ exports.handler = async (event) => {
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
   try {
+    // Printify accepts either a public web address ("url") or raw
+    // base64 image data ("contents"). Our images are stored as embedded
+    // data (starting with "data:"), so we send those as "contents".
+    const uploadPayload = { file_name: `${(title || "design").replace(/[^a-zA-Z0-9-_]+/g, "-")}.png` };
+    if (image_url.startsWith("data:")) {
+      uploadPayload.contents = image_url.split(",")[1];
+    } else {
+      uploadPayload.url = image_url;
+    }
+
     const uploadResp = await fetch(`${BASE}/uploads/images.json`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ file_name: `${(title || "design").replace(/\s+/g, "-")}.png`, url: image_url }),
+      body: JSON.stringify(uploadPayload),
     });
     if (!uploadResp.ok) {
       const errText = await uploadResp.text();
