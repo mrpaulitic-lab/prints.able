@@ -8,6 +8,7 @@ import EditBrand from "./EditBrand";
 import ConnectPrintify from "./ConnectPrintify";
 import PushToPrintify from "./PushToPrintify";
 import PublicStorefront from "./PublicStorefront";
+import AssistantChat from "./AssistantChat";
 
 function getPublicSlug() {
   const path = window.location.pathname;
