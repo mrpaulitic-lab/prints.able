@@ -8,6 +8,7 @@ import EditBrand from "./EditBrand";
 import ConnectPrintify from "./ConnectPrintify";
 import PushToPrintify from "./PushToPrintify";
 import PublicStorefront from "./PublicStorefront";
+import AssetLibrary from "./AssetLibrary";
 import AssistantChat from "./AssistantChat";
 
 function getPublicSlug() {
@@ -63,6 +64,9 @@ function AuthenticatedApp() {
           >
             My Brands
           </button>
+          <button className={`pb2-nav-link ${tab === "assets" ? "active" : ""}`} onClick={() => setTab("assets")}>
+            My Assets
+          </button>
         </div>
 
         {tab === "studio" && (
@@ -77,6 +81,8 @@ function AuthenticatedApp() {
             onOpenEdit={(brand) => { setEditTarget(brand); setTab("edit"); }}
           />
         )}
+
+        {tab === "assets" && <AssetLibrary session={session} />}
 
         {tab === "edit" && editTarget && (
           <EditBrand
@@ -103,4 +109,3 @@ function AuthenticatedApp() {
     </div>
   );
 }
-
