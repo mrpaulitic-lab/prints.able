@@ -20,7 +20,7 @@ function getImageDimensions(file) {
   });
 }
 
-export default function AssetLibrary({ session }) {
+export default function AssetLibrary({ session, onEdit }) {
   const [assets, setAssets] = useState([]);
   const [previewUrls, setPreviewUrls] = useState({});
   const [loading, setLoading] = useState(true);
@@ -185,9 +185,14 @@ export default function AssetLibrary({ session }) {
                 <p className="pb2-hint" style={{ margin: "0 0 8px" }}>{asset.width}×{asset.height}px</p>
               )}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} disabled title="Coming in the next update">
+                                <button
+                  className="pb2-btn pb2-btn-ghost"
+                  style={{ fontSize: 11, padding: "5px 8px" }}
+                  onClick={() => onEdit({ sourceImage: previewUrls[asset.id], sourceType: "user_upload", label: asset.filename })}
+                >
                   Edit
                 </button>
+
                 <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDelete(asset)}>
                   Delete
                 </button>
