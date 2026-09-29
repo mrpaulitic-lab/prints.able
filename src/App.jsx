@@ -99,6 +99,8 @@ function AuthenticatedApp() {
           />
         )}
       </div>
+      <AssistantChat />
     </div>
   );
 }
+
