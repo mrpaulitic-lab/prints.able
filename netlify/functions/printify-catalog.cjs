@@ -2,6 +2,20 @@ const { getUserFromToken, getPrintifyKey } = require("./_shared.cjs");
 
 const BASE = "https://api.printify.com/v1";
 
+// Product types with structures our simple "one image, one spot" flow
+// can't handle yet — calendars need one image per month, photo books
+// need one per page, and so on. Filtered out by title rather than left
+// to fail with a confusing error later.
+const EXCLUDED_KEYWORDS = [
+  "calendar", "planner", "puzzle", "jigsaw", "journal", "notebook",
+  "photo book", "playing card", "book",
+];
+
+function isSupported(title) {
+  const lower = title.toLowerCase();
+  return !EXCLUDED_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: JSON.stringify({ error: "Method not allowed" }) };
@@ -20,8 +34,9 @@ exports.handler = async (event) => {
     if (body.list === "blueprints") {
       const resp = await fetch(`${BASE}/catalog/blueprints.json`, { headers });
       if (!resp.ok) throw new Error("Could not load Printify's product catalog.");
-      const blueprints = await resp.json();
-      return { statusCode: 200, body: JSON.stringify({ blueprints }) };
+      const allBlueprints = await resp.json();
+      const blueprints = allBlueprints.filter((bp) => isSupported(bp.title));
+      return { statusCode: 200, body: JSON.stringify({ blueprints, totalBeforeFilter: allBlueprints.length }) };
     }
 
     if (body.list === "providers") {
