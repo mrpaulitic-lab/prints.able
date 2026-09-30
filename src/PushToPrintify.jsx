@@ -39,12 +39,14 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
     loadShops();
   }, []);
 
-  useEffect(() => {
+    useEffect(() => {
     if (priceTouched) return;
     const cost = parseFloat(costDollars);
     const margin = parseFloat(marginPercent);
-    if (!isNaN(cost) && !isNaN(margin)) {
-      setFinalPriceDollars((cost + cost * (margin / 100)).toFixed(2));
+    // True gross margin, not simple markup: price = cost / (1 - margin).
+    // A 40% markup and a 40% margin are different numbers.
+    if (!isNaN(cost) && !isNaN(margin) && margin < 100) {
+      setFinalPriceDollars((cost / (1 - margin / 100)).toFixed(2));
     }
   }, [costDollars, marginPercent, priceTouched]);
 
