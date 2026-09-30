@@ -74,7 +74,9 @@ exports.handler = async (event) => {
 
     await supabaseAdmin.from("products").insert([{
       design_id, user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft", images,
+      price_cents: finalPrice,
     }]);
+
 
     return { statusCode: 200, body: JSON.stringify({ product }) };
   } catch (err) {
