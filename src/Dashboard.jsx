@@ -10,8 +10,35 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
   const [loading, setLoading] = useState(true);
   const [busySiteFor, setBusySiteFor] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
-  const [refreshingId, setRefreshingId] = useState(null);
+    const [refreshingId, setRefreshingId] = useState(null);
   const [refreshError, setRefreshError] = useState("");
+  const [reviewingId, setReviewingId] = useState(null);
+  const [reviews, setReviews] = useState({});
+  const [reviewError, setReviewError] = useState("");
+
+  async function runDesignReview(designId) {
+    setReviewingId(designId);
+    setReviewError("");
+    try {
+      const { data: { session: freshSession } } = await supabase.auth.getSession();
+      const res = await fetch("/.netlify/functions/design-critic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshSession.access_token}` },
+        body: JSON.stringify({ design_id: designId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReviewError(data.message || data.error || "Could not review this design.");
+        return;
+      }
+      setReviews((prev) => ({ ...prev, [designId]: data.review }));
+    } catch (err) {
+      setReviewError("Network error — try again.");
+    } finally {
+      setReviewingId(null);
+    }
+  }
+
 
   useEffect(() => {
     load();
