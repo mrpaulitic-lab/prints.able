@@ -15,6 +15,17 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
   const [reviewingId, setReviewingId] = useState(null);
   const [reviews, setReviews] = useState({});
   const [reviewError, setReviewError] = useState("");
+  const [buyUrlDrafts, setBuyUrlDrafts] = useState({});
+  const [savingBuyUrlFor, setSavingBuyUrlFor] = useState(null);
+
+  async function saveBuyUrl(productId) {
+    setSavingBuyUrlFor(productId);
+    const url = (buyUrlDrafts[productId] || "").trim();
+    const { error } = await supabase.from("products").update({ buy_url: url || null }).eq("id", productId);
+    setSavingBuyUrlFor(null);
+    if (!error) load();
+  }
+
 
   async function runDesignReview(designId) {
     setReviewingId(designId);
