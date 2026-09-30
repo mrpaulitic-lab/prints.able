@@ -8,24 +8,19 @@ function getImageDimensions(file) {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => {
-      resolve({ width: img.width, height: img.height });
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => {
-      resolve({ width: null, height: null });
-      URL.revokeObjectURL(url);
-    };
+    img.onload = () => { resolve({ width: img.width, height: img.height }); URL.revokeObjectURL(url); };
+    img.onerror = () => { resolve({ width: null, height: null }); URL.revokeObjectURL(url); };
     img.src = url;
   });
 }
 
 export default function AssetLibrary({ session, onEdit }) {
   const [assets, setAssets] = useState([]);
+  const [standaloneDesigns, setStandaloneDesigns] = useState([]);
   const [previewUrls, setPreviewUrls] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingFile, setPendingFile] = useState(null);
-  const [uploadState, setUploadState] = useState("idle"); // idle | uploading | failed
+  const [uploadState, setUploadState] = useState("idle");
   const [uploadError, setUploadError] = useState("");
 
   useEffect(() => {
@@ -34,35 +29,32 @@ export default function AssetLibrary({ session, onEdit }) {
 
   async function load() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("assets")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) {
-      console.error(error);
-      setLoading(false);
-      return;
-    }
-    setAssets(data || []);
+    const { data: assetData, error } = await supabase
+      .from("assets").select("*").order("created_at", { ascending: false });
+    if (error) console.error(error);
+    setAssets(assetData || []);
 
     const urls = {};
-    for (const asset of data || []) {
-      const { data: signed } = await supabase.storage
-        .from("assets")
-        .createSignedUrl(asset.storage_path, 3600);
+    for (const asset of assetData || []) {
+      const { data: signed } = await supabase.storage.from("assets").createSignedUrl(asset.storage_path, 3600);
       if (signed?.signedUrl) urls[asset.id] = signed.signedUrl;
     }
     setPreviewUrls(urls);
+
+    // Standalone designs — ones created in the editor that aren't tied
+    // to a brand yet. These live in the public "designs" bucket already,
+    // so no signed URL is needed for them.
+    const { data: designData, error: designError } = await supabase
+      .from("designs").select("*").is("brand_id", null).order("created_at", { ascending: false });
+    if (designError) console.error(designError);
+    setStandaloneDesigns(designData || []);
+
     setLoading(false);
   }
 
   function validateFile(file) {
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      return "That file type isn't supported. Please upload a PNG, JPG, or WEBP image.";
-    }
-    if (file.size > MAX_SIZE_BYTES) {
-      return "This image is larger than Printsable's current 20 MB upload limit.";
-    }
+    if (!ALLOWED_TYPES.includes(file.type)) return "That file type isn't supported. Please upload a PNG, JPG, or WEBP image.";
+    if (file.size > MAX_SIZE_BYTES) return "This image is larger than Printsable's current 20 MB upload limit.";
     return null;
   }
 
@@ -83,14 +75,11 @@ export default function AssetLibrary({ session, onEdit }) {
   async function doUpload(file) {
     setUploadState("uploading");
     setUploadError("");
-
     const { width, height } = await getImageDimensions(file);
     const safeName = file.name.replace(/[^a-zA-Z0-9.-]+/g, "-");
     const path = `${session.user.id}/${Date.now()}-${safeName}`;
 
-    const { error: uploadErr } = await supabase.storage.from("assets").upload(path, file, {
-      contentType: file.type,
-    });
+    const { error: uploadErr } = await supabase.storage.from("assets").upload(path, file, { contentType: file.type });
     if (uploadErr) {
       console.error(uploadErr);
       setUploadError("The upload failed. Check your connection and try again.");
@@ -99,21 +88,11 @@ export default function AssetLibrary({ session, onEdit }) {
     }
 
     const { error: insertErr } = await supabase.from("assets").insert([{
-      user_id: session.user.id,
-      filename: file.name,
-      storage_path: path,
-      mime_type: file.type,
-      file_size: file.size,
-      width,
-      height,
-      source: "user_upload",
-      status: "ready",
+      user_id: session.user.id, filename: file.name, storage_path: path, mime_type: file.type,
+      file_size: file.size, width, height, source: "user_upload", status: "ready",
     }]);
-
     if (insertErr) {
       console.error(insertErr);
-      // Storage upload succeeded but the record didn't save — clean up
-      // rather than leave an orphaned file no one can see or manage.
       await supabase.storage.from("assets").remove([path]);
       setUploadError("Something went wrong saving that image. Try again.");
       setUploadState("failed");
@@ -125,12 +104,20 @@ export default function AssetLibrary({ session, onEdit }) {
     load();
   }
 
-  async function handleDelete(asset) {
+  async function handleDeleteAsset(asset) {
     if (!confirm(`Delete "${asset.filename}"? This can't be undone.`)) return;
     await supabase.storage.from("assets").remove([asset.storage_path]);
     await supabase.from("assets").delete().eq("id", asset.id);
     setAssets((prev) => prev.filter((a) => a.id !== asset.id));
   }
+
+  async function handleDeleteDesign(design) {
+    if (!confirm("Delete this design? This can't be undone.")) return;
+    await supabase.from("designs").delete().eq("id", design.id);
+    setStandaloneDesigns((prev) => prev.filter((d) => d.id !== design.id));
+  }
+
+  if (loading) return <p style={{ color: "var(--muted)" }}>Loading your assets…</p>;
 
   return (
     <div>
@@ -141,61 +128,53 @@ export default function AssetLibrary({ session, onEdit }) {
         </p>
         <label className="pb2-btn" style={{ display: "inline-block", cursor: "pointer" }}>
           {uploadState === "uploading" ? "Uploading…" : "Upload Image"}
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={handleFileChosen}
-            disabled={uploadState === "uploading"}
-            style={{ display: "none" }}
-          />
+          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChosen} disabled={uploadState === "uploading"} style={{ display: "none" }} />
         </label>
         {uploadState === "failed" && (
           <div className="pb2-error">
             {uploadError}{" "}
             {pendingFile && (
-              <button className="pb2-btn pb2-btn-ghost" style={{ marginLeft: 10, fontSize: 12, padding: "4px 10px" }} onClick={() => doUpload(pendingFile)}>
-                Retry
-              </button>
+              <button className="pb2-btn pb2-btn-ghost" style={{ marginLeft: 10, fontSize: 12, padding: "4px 10px" }} onClick={() => doUpload(pendingFile)}>Retry</button>
             )}
           </div>
         )}
       </div>
 
-      {loading ? (
-        <p style={{ color: "var(--muted)" }}>Loading your assets…</p>
-      ) : assets.length === 0 ? (
-        <div className="pb2-card">
-          <p style={{ color: "var(--muted)", margin: 0 }}>No uploads yet — add your first image above.</p>
-        </div>
+      <div className="pb2-section-label" style={{ marginTop: 4 }}>Your Uploads</div>
+      {assets.length === 0 ? (
+        <div className="pb2-card"><p style={{ color: "var(--muted)", margin: 0 }}>No uploads yet — add your first image above.</p></div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14, marginBottom: 24 }}>
           {assets.map((asset) => (
             <div key={asset.id} className="pb2-card" style={{ padding: 10 }}>
               {previewUrls[asset.id] ? (
-                <img
-                  src={previewUrls[asset.id]}
-                  alt={asset.filename}
-                  style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 8, background: "rgba(255,255,255,0.03)" }}
-                />
+                <img src={previewUrls[asset.id]} alt={asset.filename} style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 8, background: "rgba(255,255,255,0.03)" }} />
               ) : (
                 <div style={{ width: "100%", aspectRatio: "1", borderRadius: 8, background: "rgba(255,255,255,0.03)" }} />
               )}
               <p className="pb2-hint" style={{ margin: "8px 0 4px", wordBreak: "break-word" }}>{asset.filename}</p>
-              {asset.width && asset.height && (
-                <p className="pb2-hint" style={{ margin: "0 0 8px" }}>{asset.width}×{asset.height}px</p>
-              )}
+              {asset.width && asset.height && <p className="pb2-hint" style={{ margin: "0 0 8px" }}>{asset.width}×{asset.height}px</p>}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                <button
-                  className="pb2-btn pb2-btn-ghost"
-                  style={{ fontSize: 11, padding: "5px 8px" }}
-                  onClick={() => onEdit({ sourceImage: previewUrls[asset.id], sourceType: "user_upload", label: asset.filename })}
-                >
-                  Edit
-                </button>
+                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => onEdit({ sourceImage: previewUrls[asset.id], sourceType: "user_upload", label: asset.filename })}>Edit</button>
+                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDeleteAsset(asset)}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
-                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDelete(asset)}>
-                  Delete
-                </button>
+      <div className="pb2-section-label">Your Edited Designs</div>
+      {standaloneDesigns.length === 0 ? (
+        <div className="pb2-card"><p style={{ color: "var(--muted)", margin: 0 }}>Designs you edit without attaching to a brand will show up here.</p></div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
+          {standaloneDesigns.map((d) => (
+            <div key={d.id} className="pb2-card" style={{ padding: 10 }}>
+              <img src={d.image_url} alt={d.label || "Design"} style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 8, background: "rgba(255,255,255,0.03)" }} />
+              <p className="pb2-hint" style={{ margin: "8px 0 4px" }}>{d.label || "Custom design"}</p>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => onEdit({ sourceImage: d.image_url, sourceType: "edited_design", label: d.label })}>Edit</button>
+                <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDeleteDesign(d)}>Delete</button>
               </div>
             </div>
           ))}
