@@ -282,7 +282,7 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
             <label className="pb2-label">Your target profit margin (%)</label>
             <input className="pb2-input" type="number" step="1" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
 
-            <label className="pb2-label">Your selling price ($)</label>
+                      <label className="pb2-label">Your selling price ($)</label>
             <input
               className="pb2-input"
               type="number"
@@ -290,7 +290,24 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
               value={finalPriceDollars}
               onChange={(e) => { setFinalPriceDollars(e.target.value); setPriceTouched(true); }}
             />
-            <p className="pb2-hint">Suggested automatically from cost + margin — edit it directly any time.</p>
+            <p className="pb2-hint">Suggested from true gross margin (cost ÷ (1 − margin)) — edit it directly any time.</p>
+
+            {(() => {
+              const cost = parseFloat(costDollars);
+              const price = parseFloat(finalPriceDollars);
+              if (isNaN(cost) || isNaN(price) || price <= 0) return null;
+              const profit = price - cost;
+              const actualMargin = (profit / price) * 100;
+              return (
+                <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
+                  Estimated gross profit: <strong style={{ color: "var(--ink)" }}>${profit.toFixed(2)}</strong> per item
+                  {" — "}actual gross margin at this price: <strong style={{ color: "var(--ink)" }}>{actualMargin.toFixed(1)}%</strong>
+                  <br />
+                  <span style={{ fontStyle: "italic" }}>Estimate only — doesn't include shipping or payment processing fees.</span>
+                </div>
+              );
+            })()}
+  
           </div>
 
           <button className="pb2-btn" style={{ marginTop: 14 }} disabled={selectedVariantIds.length === 0} onClick={createProduct}>
