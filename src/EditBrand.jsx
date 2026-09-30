@@ -17,6 +17,8 @@ export default function EditBrand({ brand, onSaved, onCancel }) {
   const [brandName, setBrandName] = useState(brand.brand_name || "");
   const [tagline, setTagline] = useState(brand.tagline || "");
   const [mission, setMission] = useState(brand.mission || "");
+  const [contactEmail, setContactEmail] = useState(brand.contact_email || "");
+  const [siteNote, setSiteNote] = useState(brand.site_note || "");
   const [merch, setMerch] = useState(
     (brand.merch_collection || []).map((m) => ({ ...m, included: m.included !== false }))
   );
@@ -49,7 +51,11 @@ export default function EditBrand({ brand, onSaved, onCancel }) {
     setError("");
     const { error } = await supabase
       .from("brands")
-      .update({ brand_name: brandName, tagline, mission, merch_collection: merch })
+      .update({
+        brand_name: brandName, tagline, mission, merch_collection: merch,
+        contact_email: contactEmail.trim() || null,
+        site_note: siteNote.trim() || null,
+      })
       .eq("id", brand.id);
     setBusy(false);
     if (error) {
@@ -84,6 +90,13 @@ export default function EditBrand({ brand, onSaved, onCancel }) {
 
       <label className="pb2-label">Mission / description <RegenBtn field="mission" /></label>
       <textarea className="pb2-input" value={mission} onChange={(e) => setMission(e.target.value)} />
+
+      <label className="pb2-label">Contact email (shown on your public page)</label>
+      <input className="pb2-input" type="email" placeholder="you@yourbrand.com" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
+      <p className="pb2-hint">Optional — only add an inbox you actually check.</p>
+
+      <label className="pb2-label">Other business info (hours, shipping notes, etc.)</label>
+      <textarea className="pb2-input" placeholder="e.g. Orders ship within 3-5 business days." value={siteNote} onChange={(e) => setSiteNote(e.target.value)} />
 
       <label className="pb2-label">Which products should show on your public page? <RegenBtn field="merch_collection" /></label>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
