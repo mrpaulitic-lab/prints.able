@@ -122,7 +122,7 @@ export default function DesignEditor({ sourceImage, sourceType, brandId, label, 
       onSaved();
     } catch (err) {
       console.error(err);
-            const isTainted = err.message?.includes("Tainted") || err.name === "SecurityError";
+      const isTainted = err.message?.includes("Tainted") || err.name === "SecurityError";
       setError(
         isTainted
           ? "The image couldn't be exported due to a browser security restriction. Try re-uploading the image and editing again."
