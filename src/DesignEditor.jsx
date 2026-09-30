@@ -5,6 +5,7 @@ import { supabase } from "./supabaseClient";
 export default function DesignEditor({ sourceImage, sourceType, brandId, label, session, onSaved, onCancel }) {
   const canvasElRef = useRef(null);
   const fabricRef = useRef(null);
+  const objectUrlRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -17,8 +18,24 @@ export default function DesignEditor({ sourceImage, sourceType, brandId, label, 
     });
     fabricRef.current = canvas;
 
-    if (sourceImage) {
-      fabric.FabricImage.fromURL(sourceImage, { crossOrigin: "anonymous" }).then((img) => {
+    async function loadImage() {
+      if (!sourceImage) {
+        setReady(true);
+        return;
+      }
+      try {
+        // Fetch the image ourselves and load it from a local blob URL
+        // instead of pointing the canvas straight at a remote address.
+        // This avoids a browser security restriction ("tainted canvas")
+        // that otherwise silently blocks saving/exporting later,
+        // especially on Safari/iPhone.
+        const resp = await fetch(sourceImage);
+        if (!resp.ok) throw new Error("Could not download the image.");
+        const blob = await resp.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        objectUrlRef.current = objectUrl;
+
+        const img = await fabric.FabricImage.fromURL(objectUrl);
         const scale = Math.min(400 / img.width, 400 / img.height, 1);
         img.set({
           left: 250,
@@ -31,18 +48,19 @@ export default function DesignEditor({ sourceImage, sourceType, brandId, label, 
         canvas.add(img);
         canvas.setActiveObject(img);
         canvas.renderAll();
-        setReady(true);
-      }).catch((err) => {
+      } catch (err) {
         console.error(err);
         setError("Could not load that image into the editor.");
+      } finally {
         setReady(true);
-      });
-    } else {
-      setReady(true);
+      }
     }
+
+    loadImage();
 
     return () => {
       canvas.dispose();
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
   }, [sourceImage]);
 
@@ -104,7 +122,9 @@ export default function DesignEditor({ sourceImage, sourceType, brandId, label, 
       onSaved();
     } catch (err) {
       console.error(err);
-      setError("Could not save your design. Try again.");
+      setError(err.message?.includes("Tainted") || err.name === "SecurityError"
+        ? "The image couldn't be exported due to a browser security restriction. Try re-uploading the image and editing again."
+        : "Could not save your design. Try again.");
     } finally {
       setSaving(false);
     }
