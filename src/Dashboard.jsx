@@ -219,12 +219,28 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
               <div style={{ marginBottom: 12 }}>
                 <div className="pb2-hint" style={{ marginBottom: 6 }}>Real product photos from Printify:</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {allProductImages.slice(0, 6).map((img, i) => (
-                    <img key={i} src={img} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
-                  ))}
-                </div>
+                              {designs.some((d) => (productsByDesign[d.id] || []).length > 0) && (
+              <div style={{ marginBottom: 12 }}>
+                <div className="pb2-hint" style={{ marginBottom: 6 }}>Printify products — add a Buy link once you've published each to your Printify Pop-Up Store:</div>
+                {designs.flatMap((d) => productsByDesign[d.id] || []).map((p) => (
+                  <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                    {p.images?.[0] && <img src={p.images[0]} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, border: "1px solid var(--panel-border)" }} />}
+                    <span className="pb2-hint" style={{ minWidth: 60 }}>{p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : "—"}</span>
+                    <input
+                      className="pb2-input"
+                      style={{ flex: 1, minWidth: 140, fontSize: 12, padding: "6px 10px" }}
+                      placeholder="Paste your Printify Pop-Up Store link…"
+                      value={buyUrlDrafts[p.id] ?? p.buy_url ?? ""}
+                      onChange={(e) => setBuyUrlDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                    />
+                    <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "6px 10px" }} disabled={savingBuyUrlFor === p.id} onClick={() => saveBuyUrl(p.id)}>
+                      {savingBuyUrlFor === p.id ? "…" : "Save"}
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
+
 
             {isPublished && siteUrl && (
               <p style={{ fontSize: 13, marginBottom: 12 }}>
