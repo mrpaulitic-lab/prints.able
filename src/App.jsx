@@ -9,6 +9,7 @@ import ConnectPrintify from "./ConnectPrintify";
 import PushToPrintify from "./PushToPrintify";
 import PublicStorefront from "./PublicStorefront";
 import AssetLibrary from "./AssetLibrary";
+import DesignEditor from "./DesignEditor";
 import AssistantChat from "./AssistantChat";
 
 function getPublicSlug() {
@@ -33,6 +34,7 @@ function AuthenticatedApp() {
   const [tab, setTab] = useState("studio");
   const [pushTarget, setPushTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [editorTarget, setEditorTarget] = useState(null);
   const [dashboardKey, setDashboardKey] = useState(0);
 
   useEffect(() => {
@@ -79,10 +81,28 @@ function AuthenticatedApp() {
             session={session}
             onOpenPush={(brand, design) => { setPushTarget({ brand, design }); setTab("push"); }}
             onOpenEdit={(brand) => { setEditTarget(brand); setTab("edit"); }}
+            onOpenDesignEditor={(target) => { setEditorTarget(target); setTab("editor"); }}
           />
         )}
 
-        {tab === "assets" && <AssetLibrary session={session} />}
+        {tab === "assets" && (
+          <AssetLibrary
+            session={session}
+            onEdit={(target) => { setEditorTarget(target); setTab("editor"); }}
+          />
+        )}
+
+        {tab === "editor" && editorTarget && (
+          <DesignEditor
+            sourceImage={editorTarget.sourceImage}
+            sourceType={editorTarget.sourceType}
+            brandId={editorTarget.brandId}
+            label={editorTarget.label}
+            session={session}
+            onSaved={() => { setTab(editorTarget.brandId ? "dashboard" : "assets"); setDashboardKey((k) => k + 1); }}
+            onCancel={() => setTab(editorTarget.brandId ? "dashboard" : "assets")}
+          />
+        )}
 
         {tab === "edit" && editTarget && (
           <EditBrand
