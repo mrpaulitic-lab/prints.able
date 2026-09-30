@@ -172,16 +172,34 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
                       >
                         Push to Printify
                       </button>
-                      <button
+                                            <button
                         className="pb2-btn pb2-btn-ghost"
-                        style={{ fontSize: 12, padding: "6px 10px", width: "100%" }}
+                        style={{ fontSize: 12, padding: "6px 10px", width: "100%", marginBottom: 4 }}
                         onClick={() => onOpenDesignEditor({ sourceImage: d.image_url, sourceType: d.source || "ai_generated", label: d.label, brandId: b.id })}
                       >
                         Edit design
                       </button>
-  
+                      <button
+                        className="pb2-btn pb2-btn-ghost"
+                        style={{ fontSize: 12, padding: "6px 10px", width: "100%" }}
+                        disabled={reviewingId === d.id}
+                        onClick={() => runDesignReview(d.id)}
+                      >
+                        {reviewingId === d.id ? "Reviewing…" : "🔍 AI Review"}
+                      </button>
+                      {reviewError && reviewingId === null && <div className="pb2-error" style={{ marginTop: 6 }}>{reviewError}</div>}
+                      {reviews[d.id] && (
+                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, lineHeight: 1.5, textAlign: "left" }}>
+                          <div><strong>Brand fit:</strong> {reviews[d.id].brand_consistency}</div>
+                          <div><strong>Audience:</strong> {reviews[d.id].audience_relevance}</div>
+                          <div><strong>Print suitability:</strong> {reviews[d.id].print_suitability}</div>
+                          <div><strong>Composition:</strong> {reviews[d.id].composition}</div>
+                          <div style={{ marginTop: 4, fontStyle: "italic" }}>{reviews[d.id].overall_note}</div>
+                        </div>
+                      )}
                     </div>
                   ))}
+
                 </div>
               </div>
             )}
