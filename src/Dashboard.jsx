@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { slugify } from "./slugify";
 
-export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
+export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesignEditor }) {
   const [brands, setBrands] = useState([]);
   const [designsByBrand, setDesignsByBrand] = useState({});
   const [sitesByBrand, setSitesByBrand] = useState({});
@@ -138,13 +138,21 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit }) {
                     <div key={d.id}>
                       <img src={d.image_url} alt={d.label || "Design"} style={{ width: "100%", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
                       <div className="pb2-hint" style={{ margin: "4px 0" }}>{d.label || "Design"}</div>
-                      <button
+                                          <button
                         className="pb2-btn"
-                        style={{ fontSize: 12, padding: "6px 10px", width: "100%" }}
+                        style={{ fontSize: 12, padding: "6px 10px", width: "100%", marginBottom: 4 }}
                         onClick={() => onOpenPush(b, d)}
                       >
                         Push to Printify
                       </button>
+                      <button
+                        className="pb2-btn pb2-btn-ghost"
+                        style={{ fontSize: 12, padding: "6px 10px", width: "100%" }}
+                        onClick={() => onOpenDesignEditor({ sourceImage: d.image_url, sourceType: d.source || "ai_generated", label: d.label, brandId: b.id })}
+                      >
+                        Edit design
+                      </button>
+  
                     </div>
                   ))}
                 </div>
