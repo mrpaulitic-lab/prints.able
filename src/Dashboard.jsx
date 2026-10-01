@@ -10,46 +10,13 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
   const [loading, setLoading] = useState(true);
   const [busySiteFor, setBusySiteFor] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
-    const [refreshingId, setRefreshingId] = useState(null);
+  const [refreshingId, setRefreshingId] = useState(null);
   const [refreshError, setRefreshError] = useState("");
   const [reviewingId, setReviewingId] = useState(null);
   const [reviews, setReviews] = useState({});
   const [reviewError, setReviewError] = useState("");
   const [buyUrlDrafts, setBuyUrlDrafts] = useState({});
   const [savingBuyUrlFor, setSavingBuyUrlFor] = useState(null);
-
-  async function saveBuyUrl(productId) {
-    setSavingBuyUrlFor(productId);
-    const url = (buyUrlDrafts[productId] || "").trim();
-    const { error } = await supabase.from("products").update({ buy_url: url || null }).eq("id", productId);
-    setSavingBuyUrlFor(null);
-    if (!error) load();
-  }
-
-
-  async function runDesignReview(designId) {
-    setReviewingId(designId);
-    setReviewError("");
-    try {
-      const { data: { session: freshSession } } = await supabase.auth.getSession();
-      const res = await fetch("/.netlify/functions/design-critic", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshSession.access_token}` },
-        body: JSON.stringify({ design_id: designId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReviewError(data.message || data.error || "Could not review this design.");
-        return;
-      }
-      setReviews((prev) => ({ ...prev, [designId]: data.review }));
-    } catch (err) {
-      setReviewError("Network error — try again.");
-    } finally {
-      setReviewingId(null);
-    }
-  }
-
 
   useEffect(() => {
     load();
@@ -139,6 +106,37 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
     }
   }
 
+  async function runDesignReview(designId) {
+    setReviewingId(designId);
+    setReviewError("");
+    try {
+      const { data: { session: freshSession } } = await supabase.auth.getSession();
+      const res = await fetch("/.netlify/functions/design-critic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshSession.access_token}` },
+        body: JSON.stringify({ design_id: designId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReviewError(data.message || data.error || "Could not review this design.");
+        return;
+      }
+      setReviews((prev) => ({ ...prev, [designId]: data.review }));
+    } catch (err) {
+      setReviewError("Network error — try again.");
+    } finally {
+      setReviewingId(null);
+    }
+  }
+
+  async function saveBuyUrl(productId) {
+    setSavingBuyUrlFor(productId);
+    const url = (buyUrlDrafts[productId] || "").trim();
+    const { error } = await supabase.from("products").update({ buy_url: url || null }).eq("id", productId);
+    setSavingBuyUrlFor(null);
+    if (!error) load();
+  }
+
   if (loading) return <p style={{ color: "var(--muted)" }}>Loading your brands…</p>;
 
   if (brands.length === 0) {
@@ -158,9 +156,7 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
         const site = sitesByBrand[b.id];
         const isPublished = site?.published;
         const siteUrl = site ? `${window.location.origin}/b/${site.slug}` : null;
-        const allProductImages = designs.flatMap((d) =>
-          (productsByDesign[d.id] || []).flatMap((p) => p.images || [])
-        );
+        const allProducts = designs.flatMap((d) => productsByDesign[d.id] || []);
         const isExpanded = expandedId === b.id;
 
         return (
@@ -176,14 +172,14 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
                     <div key={d.id}>
                       <img src={d.image_url} alt={d.label || "Design"} style={{ width: "100%", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
                       <div className="pb2-hint" style={{ margin: "4px 0" }}>{d.label || "Design"}</div>
-                                          <button
+                      <button
                         className="pb2-btn"
                         style={{ fontSize: 12, padding: "6px 10px", width: "100%", marginBottom: 4 }}
                         onClick={() => onOpenPush(b, d)}
                       >
                         Push to Printify
                       </button>
-                                            <button
+                      <button
                         className="pb2-btn pb2-btn-ghost"
                         style={{ fontSize: 12, padding: "6px 10px", width: "100%", marginBottom: 4 }}
                         onClick={() => onOpenDesignEditor({ sourceImage: d.image_url, sourceType: d.source || "ai_generated", label: d.label, brandId: b.id })}
@@ -198,7 +194,9 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
                       >
                         {reviewingId === d.id ? "Reviewing…" : "🔍 AI Review"}
                       </button>
-                      {reviewError && reviewingId === null && <div className="pb2-error" style={{ marginTop: 6 }}>{reviewError}</div>}
+                      {reviewError && reviewingId === null && (
+                        <div className="pb2-error" style={{ marginTop: 6, fontSize: 11 }}>{reviewError}</div>
+                      )}
                       {reviews[d.id] && (
                         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, lineHeight: 1.5, textAlign: "left" }}>
                           <div><strong>Brand fit:</strong> {reviews[d.id].brand_consistency}</div>
@@ -210,22 +208,23 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
                       )}
                     </div>
                   ))}
-
                 </div>
               </div>
             )}
 
-            {allProductImages.length > 0 && (
+            {allProducts.length > 0 && (
               <div style={{ marginBottom: 12 }}>
-                <div className="pb2-hint" style={{ marginBottom: 6 }}>Real product photos from Printify:</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              {designs.some((d) => (productsByDesign[d.id] || []).length > 0) && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="pb2-hint" style={{ marginBottom: 6 }}>Printify products — add a Buy link once you've published each to your Printify Pop-Up Store:</div>
-                {designs.flatMap((d) => productsByDesign[d.id] || []).map((p) => (
+                <div className="pb2-hint" style={{ marginBottom: 6 }}>
+                  Printify products — add a Buy link once you've published each to your Printify Pop-Up Store:
+                </div>
+                {allProducts.map((p) => (
                   <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-                    {p.images?.[0] && <img src={p.images[0]} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, border: "1px solid var(--panel-border)" }} />}
-                    <span className="pb2-hint" style={{ minWidth: 60 }}>{p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : "—"}</span>
+                    {p.images?.[0] && (
+                      <img src={p.images[0]} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, border: "1px solid var(--panel-border)" }} />
+                    )}
+                    <span className="pb2-hint" style={{ minWidth: 60 }}>
+                      {p.price_cents ? `$${(p.price_cents / 100).toFixed(2)}` : "—"}
+                    </span>
                     <input
                       className="pb2-input"
                       style={{ flex: 1, minWidth: 140, fontSize: 12, padding: "6px 10px" }}
@@ -233,14 +232,18 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
                       value={buyUrlDrafts[p.id] ?? p.buy_url ?? ""}
                       onChange={(e) => setBuyUrlDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
                     />
-                    <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "6px 10px" }} disabled={savingBuyUrlFor === p.id} onClick={() => saveBuyUrl(p.id)}>
+                    <button
+                      className="pb2-btn pb2-btn-ghost"
+                      style={{ fontSize: 11, padding: "6px 10px" }}
+                      disabled={savingBuyUrlFor === p.id}
+                      onClick={() => saveBuyUrl(p.id)}
+                    >
                       {savingBuyUrlFor === p.id ? "…" : "Save"}
                     </button>
                   </div>
                 ))}
               </div>
             )}
-
 
             {isPublished && siteUrl && (
               <p style={{ fontSize: 13, marginBottom: 12 }}>
@@ -278,7 +281,12 @@ export default function Dashboard({ session, onOpenPush, onOpenEdit, onOpenDesig
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div className="pb2-section-label" style={{ marginBottom: 0 }}>Marketing Copy</div>
-                  <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} disabled={refreshingId === b.id} onClick={() => refreshMarketing(b.id)}>
+                  <button
+                    className="pb2-btn pb2-btn-ghost"
+                    style={{ fontSize: 12, padding: "6px 10px" }}
+                    disabled={refreshingId === b.id}
+                    onClick={() => refreshMarketing(b.id)}
+                  >
                     {refreshingId === b.id ? "Generating…" : "🔄 Refresh content"}
                   </button>
                 </div>
