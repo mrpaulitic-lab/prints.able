@@ -31,15 +31,30 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
   const [placeholderPositions, setPlaceholderPositions] = useState([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState([]);
   const [costDollars, setCostDollars] = useState("");
+  const [costTouched, setCostTouched] = useState(false);
   const [marginPercent, setMarginPercent] = useState("40");
   const [finalPriceDollars, setFinalPriceDollars] = useState("");
   const [priceTouched, setPriceTouched] = useState(false);
+  const [createdProduct, setCreatedProduct] = useState(null);
 
   useEffect(() => {
     loadShops();
   }, []);
 
-    useEffect(() => {
+  // Auto-fill the cost field from Printify's own data, using the first
+  // selected variant as the reference cost. Different sizes/colors can
+  // cost slightly different amounts — this is a starting point, not a
+  // guarantee for every variant selected, and can always be overridden.
+  useEffect(() => {
+    if (costTouched) return;
+    if (selectedVariantIds.length === 0) return;
+    const firstSelected = variants.find((v) => v.id === selectedVariantIds[0]);
+    if (firstSelected && typeof firstSelected.cost === "number") {
+      setCostDollars((firstSelected.cost / 100).toFixed(2));
+    }
+  }, [selectedVariantIds, variants, costTouched]);
+
+  useEffect(() => {
     if (priceTouched) return;
     const cost = parseFloat(costDollars);
     const margin = parseFloat(marginPercent);
@@ -129,7 +144,7 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
     }
     setStep("creating");
     try {
-      await authedFetch("/.netlify/functions/printify-create-product", {
+      const result = await authedFetch("/.netlify/functions/printify-create-product", {
         shop_id: shopId,
         blueprint_id: blueprintId,
         print_provider_id: providerId,
@@ -141,6 +156,7 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
         description: brand.mission,
         price_cents: priceCents,
       });
+      setCreatedProduct(result.product);
       setStep("done");
     } catch (err) {
       setError(err.message);
@@ -270,6 +286,9 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
                   }}
                 />
                 {v.title}
+                {typeof v.cost === "number" && (
+                  <span className="pb2-hint" style={{ marginLeft: "auto" }}>Printify cost: ${(v.cost / 100).toFixed(2)}</span>
+                )}
               </label>
             ))}
           </div>
@@ -277,12 +296,24 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
           <div style={{ marginTop: 20, borderTop: "1px solid var(--panel-border)", paddingTop: 16 }}>
             <div className="pb2-section-label">Pricing</div>
             <label className="pb2-label">What Printify charges you per item ($)</label>
-            <input className="pb2-input" type="number" step="0.01" placeholder="e.g. 12.50" value={costDollars} onChange={(e) => setCostDollars(e.target.value)} />
+            <input
+              className="pb2-input"
+              type="number"
+              step="0.01"
+              placeholder="e.g. 12.50"
+              value={costDollars}
+              onChange={(e) => { setCostDollars(e.target.value); setCostTouched(true); }}
+            />
+            <p className="pb2-hint">
+              {selectedVariantIds.length > 0 && variants.find((v) => v.id === selectedVariantIds[0] && typeof v.cost === "number")
+                ? "Auto-filled from Printify's real cost for your first selected option — edit if you've chosen multiple sizes with different costs."
+                : "Select a size/color above to auto-fill this, or enter it yourself."}
+            </p>
 
             <label className="pb2-label">Your target profit margin (%)</label>
             <input className="pb2-input" type="number" step="1" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
 
-                      <label className="pb2-label">Your selling price ($)</label>
+            <label className="pb2-label">Your selling price ($)</label>
             <input
               className="pb2-input"
               type="number"
@@ -307,7 +338,6 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
                 </div>
               );
             })()}
-  
           </div>
 
           <button className="pb2-btn" style={{ marginTop: 14 }} disabled={selectedVariantIds.length === 0} onClick={createProduct}>
@@ -321,9 +351,25 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
       {step === "done" && (
         <>
           <p style={{ color: "var(--green)", fontWeight: 600 }}>
-            Draft product created at your chosen price. It's saved in your Printify account — review it there before publishing.
+            Here's what it looks like:
           </p>
-          <button className="pb2-btn" onClick={onDone}>Back to dashboard</button>
+          {createdProduct?.images?.length > 0 && (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+              {createdProduct.images.slice(0, 4).map((img, i) => (
+                <img key={i} src={img.src || img} alt="" style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
+              ))}
+            </div>
+          )}
+          <div className="pb2-card" style={{ background: "rgba(34,211,238,0.06)", borderColor: "var(--accent2)" }}>
+            <div className="pb2-section-label">Where to find this in Printify</div>
+            <ol style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 18, margin: 0 }}>
+              <li>Open printify.com and log into your account (same account you connected here).</li>
+              <li>Click <strong>My Products</strong> in the left menu.</li>
+              <li>Click the <strong>Drafts</strong> tab — your product "{brand.brand_name}" will be there.</li>
+              <li>Open it to see full mockups, edit placement, or publish it to a store.</li>
+            </ol>
+          </div>
+          <button className="pb2-btn" style={{ marginTop: 14 }} onClick={onDone}>Back to dashboard</button>
         </>
       )}
     </div>
