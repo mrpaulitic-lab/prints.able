@@ -14,7 +14,7 @@ exports.handler = async (event) => {
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
-  const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description, price_cents } = body;
+  const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description, price_cents, source_type } = body;
 
   if (!shop_id || !blueprint_id || !print_provider_id || !variant_ids?.length || !image_url) {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields to create a product." }) };
@@ -72,10 +72,17 @@ exports.handler = async (event) => {
     const product = await productResp.json();
     const images = (product.images || []).map((img) => img.src).filter(Boolean);
 
-    await supabaseAdmin.from("products").insert([{
-      design_id, user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft", images,
+    const productRow = {
+      user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft", images,
       price_cents: finalPrice,
-    }]);
+    };
+    if (source_type === "asset") {
+      productRow.asset_id = design_id;
+    } else {
+      productRow.design_id = design_id;
+    }
+    await supabaseAdmin.from("products").insert([productRow]);
+
 
 
     return { statusCode: 200, body: JSON.stringify({ product }) };
