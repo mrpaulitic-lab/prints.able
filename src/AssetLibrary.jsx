@@ -14,7 +14,7 @@ function getImageDimensions(file) {
   });
 }
 
-export default function AssetLibrary({ session, onEdit }) {
+export default function AssetLibrary({ session, onEdit, onOpenPush }) {
   const [assets, setAssets] = useState([]);
   const [standaloneDesigns, setStandaloneDesigns] = useState([]);
   const [previewUrls, setPreviewUrls] = useState({});
@@ -22,6 +22,7 @@ export default function AssetLibrary({ session, onEdit }) {
   const [pendingFile, setPendingFile] = useState(null);
   const [uploadState, setUploadState] = useState("idle");
   const [uploadError, setUploadError] = useState("");
+  const [pushingId, setPushingId] = useState(null);
 
   useEffect(() => {
     load();
@@ -41,9 +42,6 @@ export default function AssetLibrary({ session, onEdit }) {
     }
     setPreviewUrls(urls);
 
-    // Standalone designs — ones created in the editor that aren't tied
-    // to a brand yet. These live in the public "designs" bucket already,
-    // so no signed URL is needed for them.
     const { data: designData, error: designError } = await supabase
       .from("designs").select("*").is("brand_id", null).order("created_at", { ascending: false });
     if (designError) console.error(designError);
@@ -117,6 +115,31 @@ export default function AssetLibrary({ session, onEdit }) {
     setStandaloneDesigns((prev) => prev.filter((d) => d.id !== design.id));
   }
 
+  async function handlePushAsset(asset) {
+    setPushingId(asset.id);
+    // Get a fresh link rather than reusing the one from page load, since
+    // that one may be close to expiring by the time this button is pressed.
+    const { data: signed, error } = await supabase.storage.from("assets").createSignedUrl(asset.storage_path, 3600);
+    setPushingId(null);
+    if (error || !signed?.signedUrl) {
+      alert("Could not prepare this image for Printify. Try again.");
+      return;
+    }
+    onOpenPush(
+      { id: null, brand_name: asset.filename.replace(/\.[^.]+$/, ""), mission: "" },
+      { id: asset.id, image_url: signed.signedUrl },
+      "asset"
+    );
+  }
+
+  function handlePushDesign(design) {
+    onOpenPush(
+      { id: null, brand_name: design.label || "My Design", mission: "" },
+      { id: design.id, image_url: design.image_url },
+      "design"
+    );
+  }
+
   if (loading) return <p style={{ color: "var(--muted)" }}>Loading your assets…</p>;
 
   return (
@@ -155,6 +178,9 @@ export default function AssetLibrary({ session, onEdit }) {
               <p className="pb2-hint" style={{ margin: "8px 0 4px", wordBreak: "break-word" }}>{asset.filename}</p>
               {asset.width && asset.height && <p className="pb2-hint" style={{ margin: "0 0 8px" }}>{asset.width}×{asset.height}px</p>}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="pb2-btn" style={{ fontSize: 11, padding: "5px 8px" }} disabled={pushingId === asset.id} onClick={() => handlePushAsset(asset)}>
+                  {pushingId === asset.id ? "…" : "Push to Printify"}
+                </button>
                 <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => onEdit({ sourceImage: previewUrls[asset.id], sourceType: "user_upload", label: asset.filename })}>Edit</button>
                 <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDeleteAsset(asset)}>Delete</button>
               </div>
@@ -173,6 +199,7 @@ export default function AssetLibrary({ session, onEdit }) {
               <img src={d.image_url} alt={d.label || "Design"} style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 8, background: "rgba(255,255,255,0.03)" }} />
               <p className="pb2-hint" style={{ margin: "8px 0 4px" }}>{d.label || "Custom design"}</p>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="pb2-btn" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => handlePushDesign(d)}>Push to Printify</button>
                 <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => onEdit({ sourceImage: d.image_url, sourceType: "edited_design", label: d.label })}>Edit</button>
                 <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }} onClick={() => handleDeleteDesign(d)}>Delete</button>
               </div>
