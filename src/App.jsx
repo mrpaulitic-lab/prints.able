@@ -50,6 +50,11 @@ function AuthenticatedApp() {
   if (authLoading) return <div className="pb2-app" style={{ padding: 40 }}>Loading…</div>;
   if (!session) return <AuthScreen />;
 
+  function openPush(brand, design, sourceType = "design") {
+    setPushTarget({ brand, design, sourceType });
+    setTab("push");
+  }
+
   return (
     <div className="pb2-app">
       <GlobalStyle />
@@ -60,7 +65,6 @@ function AuthenticatedApp() {
             <UsageBadge session={session} />
             <button className="pb2-nav-link" onClick={() => supabase.auth.signOut()}>Sign out</button>
           </div>
-
         </div>
 
         <div className="pb2-nav">
@@ -84,7 +88,7 @@ function AuthenticatedApp() {
           <Dashboard
             key={dashboardKey}
             session={session}
-            onOpenPush={(brand, design) => { setPushTarget({ brand, design }); setTab("push"); }}
+            onOpenPush={(brand, design) => openPush(brand, design, "design")}
             onOpenEdit={(brand) => { setEditTarget(brand); setTab("edit"); }}
             onOpenDesignEditor={(target) => { setEditorTarget(target); setTab("editor"); }}
           />
@@ -94,6 +98,7 @@ function AuthenticatedApp() {
           <AssetLibrary
             session={session}
             onEdit={(target) => { setEditorTarget(target); setTab("editor"); }}
+            onOpenPush={openPush}
           />
         )}
 
@@ -125,7 +130,8 @@ function AuthenticatedApp() {
           <PushToPrintify
             brand={pushTarget.brand}
             design={pushTarget.design}
-            onDone={() => { setTab("dashboard"); setDashboardKey((k) => k + 1); }}
+            sourceType={pushTarget.sourceType}
+            onDone={() => { setTab(pushTarget.brand?.id ? "dashboard" : "assets"); setDashboardKey((k) => k + 1); }}
             onNeedsConnection={() => setTab("connect")}
           />
         )}
