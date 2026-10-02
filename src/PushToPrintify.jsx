@@ -15,7 +15,7 @@ async function authedFetch(path, body) {
   return data;
 }
 
-export default function PushToPrintify({ brand, design, onDone, onNeedsConnection }) {
+export default function PushToPrintify({ brand, design, sourceType = "design", onDone, onNeedsConnection }) {
   const [step, setStep] = useState("loading-shops");
   const [error, setError] = useState("");
   const [shops, setShops] = useState([]);
@@ -150,12 +150,13 @@ export default function PushToPrintify({ brand, design, onDone, onNeedsConnectio
         print_provider_id: providerId,
         variant_ids: selectedVariantIds,
         design_id: design.id,
-        brand_id: brand.id,
+        source_type: sourceType,
         image_url: design.image_url,
-        title: brand.brand_name,
-        description: brand.mission,
+        title: brand?.brand_name || "Untitled product",
+        description: brand?.mission || "",
         price_cents: priceCents,
       });
+
       setCreatedProduct(result.product);
       setStep("done");
     } catch (err) {
