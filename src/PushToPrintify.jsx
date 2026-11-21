@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
+import DesignEditor, { checkerStyle } from "./DesignEditor";
 
 const PAGE_SIZE = 30;
 
@@ -15,7 +16,19 @@ async function authedFetch(path, body) {
   return data;
 }
 
-export default function PushToPrintify({ brand, design, sourceType = "design", onDone, onNeedsConnection }) {
+function areaLabel(position) {
+  return String(position || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function shapeHint(area) {
+  if (!area?.width || !area?.height) return "";
+  const ratio = area.width / area.height;
+  if (ratio > 1.3) return "wide";
+  if (ratio < 0.77) return "tall";
+  return "roughly square";
+}
+
+export default function PushToPrintify({ brand, design, sourceType = "design", session, onDone, onNeedsConnection }) {
   const [step, setStep] = useState("loading-shops");
   const [error, setError] = useState("");
   const [shops, setShops] = useState([]);
@@ -28,7 +41,6 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
   const [providers, setProviders] = useState([]);
   const [providerId, setProviderId] = useState(null);
   const [variants, setVariants] = useState([]);
-  const [placeholderPositions, setPlaceholderPositions] = useState([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState([]);
   const [costDollars, setCostDollars] = useState("");
   const [costTouched, setCostTouched] = useState(false);
@@ -36,15 +48,20 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
   const [finalPriceDollars, setFinalPriceDollars] = useState("");
   const [priceTouched, setPriceTouched] = useState(false);
   const [createdProduct, setCreatedProduct] = useState(null);
+  const [placements, setPlacements] = useState({});
+  const [editingArea, setEditingArea] = useState(null);
+  const [pickerFor, setPickerFor] = useState(null);
+  const [library, setLibrary] = useState({ loaded: false, items: [] });
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [placedSummary, setPlacedSummary] = useState([]);
 
   useEffect(() => {
     loadShops();
   }, []);
 
-  // Auto-fill the cost field from Printify's own data, using the first
-  // selected variant as the reference cost. Different sizes/colors can
-  // cost slightly different amounts — this is a starting point, not a
-  // guarantee for every variant selected, and can always be overridden.
+  // Auto-fill the cost from Printify's own data, using the first selected
+  // size/color as the reference. Different options can cost slightly
+  // different amounts, so this is a starting point you can override.
   useEffect(() => {
     if (costTouched) return;
     if (selectedVariantIds.length === 0) return;
@@ -59,7 +76,6 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
     const cost = parseFloat(costDollars);
     const margin = parseFloat(marginPercent);
     // True gross margin, not simple markup: price = cost / (1 - margin).
-    // A 40% markup and a 40% margin are different numbers.
     if (!isNaN(cost) && !isNaN(margin) && margin < 100) {
       setFinalPriceDollars((cost / (1 - margin / 100)).toFixed(2));
     }
@@ -98,6 +114,9 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
     setError("");
     setBlueprintId(bpId);
     setSelectedBlueprintTitle(bpTitle);
+    setSelectedVariantIds([]);
+    setCostTouched(false);
+    setPlacements({});
     setStep("loading-catalog");
     try {
       const data = await authedFetch("/.netlify/functions/printify-catalog", { list: "providers", blueprint_id: bpId });
@@ -111,27 +130,89 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
   async function loadVariants(provId) {
     setError("");
     setProviderId(provId);
+    setSelectedVariantIds([]);
+    setPlacements({});
     setStep("loading-catalog");
     try {
       const data = await authedFetch("/.netlify/functions/printify-catalog", {
         list: "variants", blueprint_id: blueprintId, print_provider_id: provId,
       });
-      const fetchedVariants = data.variants || [];
-      setVariants(fetchedVariants);
-
-      // Real compatibility check, using Printify's own data rather than
-      // guessing from the product name: if this product needs more than
-      // one print area (like a calendar needing one image per month),
-      // warn before letting the user pick sizes, instead of failing later.
-      const firstPlaceholders = fetchedVariants[0]?.placeholders || [];
-      if (firstPlaceholders.length > 1) {
-        setPlaceholderPositions(firstPlaceholders.map((p) => p.position).filter(Boolean));
-        setStep("compat-warning");
-      } else {
-        setStep("pick-variants");
-      }
+      setVariants(data.variants || []);
+      setStep("pick-variants");
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  // The print areas this product offers, limited to the ones that exist
+  // for every size/color currently selected.
+  const selectedVariants = variants.filter((v) => selectedVariantIds.includes(v.id));
+  let printAreas = [];
+  if (selectedVariants.length > 0) {
+    let common = null;
+    for (const v of selectedVariants) {
+      const list = (v.placeholders || []).filter((p) => p.position);
+      common = common === null ? list : common.filter((p) => list.some((q) => q.position === p.position));
+    }
+    printAreas = common || [];
+  }
+
+  function goToPlacements() {
+    setError("");
+    const price = parseFloat(finalPriceDollars || "0");
+    if (!price || price <= 0) {
+      setError("Enter a valid selling price before continuing.");
+      return;
+    }
+    setPlacements((prev) => {
+      const next = {};
+      for (const area of printAreas) {
+        if (prev[area.position]) next[area.position] = prev[area.position];
+      }
+      // Start with the main design in the front area (or the first area).
+      if (Object.keys(next).length === 0 && printAreas.length > 0 && design?.image_url) {
+        const front = printAreas.find((a) => a.position === "front") || printAreas[0];
+        next[front.position] = { image_url: design.image_url, label: brand?.brand_name || "Main design" };
+      }
+      return next;
+    });
+    setStep("placements");
+  }
+
+  function assign(position, image_url, label) {
+    setPlacements((prev) => ({ ...prev, [position]: { image_url, label } }));
+    setPickerFor(null);
+  }
+
+  function clearArea(position) {
+    setPlacements((prev) => {
+      const next = { ...prev };
+      delete next[position];
+      return next;
+    });
+  }
+
+  async function openPicker(position) {
+    setPickerFor(position);
+    if (library.loaded) return;
+    setLibraryLoading(true);
+    try {
+      const { data: designData } = await supabase
+        .from("designs").select("*").order("created_at", { ascending: false }).limit(40);
+      const { data: assetData } = await supabase
+        .from("assets").select("*").order("created_at", { ascending: false }).limit(40);
+
+      const items = [];
+      for (const d of designData || []) {
+        if (d.image_url) items.push({ key: `d-${d.id}`, label: d.label || "Design", image_url: d.image_url });
+      }
+      for (const a of assetData || []) {
+        const { data: signed } = await supabase.storage.from("assets").createSignedUrl(a.storage_path, 3600);
+        if (signed?.signedUrl) items.push({ key: `a-${a.id}`, label: a.filename, image_url: signed.signedUrl });
+      }
+      setLibrary({ loaded: true, items });
+    } finally {
+      setLibraryLoading(false);
     }
   }
 
@@ -140,8 +221,19 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
     const priceCents = Math.round(parseFloat(finalPriceDollars || "0") * 100);
     if (!priceCents || priceCents <= 0) {
       setError("Enter a valid selling price before creating the product.");
+      setStep("pick-variants");
       return;
     }
+
+    const assigned = Object.entries(placements)
+      .filter(([position, v]) => v && v.image_url && (printAreas.length === 0 || printAreas.some((a) => a.position === position)))
+      .map(([position, v]) => ({ position, image_url: v.image_url, label: v.label }));
+
+    if (printAreas.length > 0 && assigned.length === 0) {
+      setError("Add artwork to at least one print area first.");
+      return;
+    }
+
     setStep("creating");
     try {
       const result = await authedFetch("/.netlify/functions/printify-create-product", {
@@ -151,17 +243,18 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
         variant_ids: selectedVariantIds,
         design_id: design.id,
         source_type: sourceType,
-        image_url: design.image_url,
+        image_url: assigned.length > 0 ? undefined : design.image_url,
+        placements: assigned.map(({ position, image_url }) => ({ position, image_url })),
         title: brand?.brand_name || "Untitled product",
         description: brand?.mission || "",
         price_cents: priceCents,
       });
-
       setCreatedProduct(result.product);
+      setPlacedSummary(assigned.map(({ position, label }) => ({ position, label })));
       setStep("done");
     } catch (err) {
       setError(err.message);
-      setStep("pick-variants");
+      setStep("placements");
     }
   }
 
@@ -174,6 +267,30 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
     ? matchingBlueprints.slice(0, 60)
     : matchingBlueprints.slice(blueprintPage * PAGE_SIZE, blueprintPage * PAGE_SIZE + PAGE_SIZE);
 
+  // While editing one print area, show only the editor.
+  if (step === "editing-area" && editingArea) {
+    return (
+      <DesignEditor
+        sourceImage={placements[editingArea.position]?.image_url || null}
+        canvasWidth={editingArea.width}
+        canvasHeight={editingArea.height}
+        areaName={areaLabel(editingArea.position)}
+        brandId={brand?.id || null}
+        label={`${areaLabel(editingArea.position)} artwork`}
+        session={session}
+        onSavedDesign={(saved) => {
+          setPlacements((prev) => ({
+            ...prev,
+            [editingArea.position]: { image_url: saved.image_url, label: "Your edited artwork" },
+          }));
+          setEditingArea(null);
+          setStep("placements");
+        }}
+        onCancel={() => { setEditingArea(null); setStep("placements"); }}
+      />
+    );
+  }
+
   return (
     <div className="pb2-card">
       <button
@@ -184,7 +301,7 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
         ← Back to My Brands
       </button>
 
-      <div className="pb2-section-label">Push "{brand.brand_name}" to Printify</div>
+      <div className="pb2-section-label">Push "{brand?.brand_name}" to Printify</div>
       {error && <div className="pb2-error">{error}</div>}
 
       {step === "loading-shops" && <p>Loading your Printify shops…</p>}
@@ -239,7 +356,7 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
             </div>
           )}
           <p className="pb2-hint" style={{ marginTop: 10 }}>
-            Some product types (calendars, puzzles, photo books) aren't shown yet — they need multiple images per product, which isn't supported here yet.
+            Calendars, puzzles, journals, and photo books aren't shown — they need a different image on every page, which isn't supported yet.
           </p>
         </>
       )}
@@ -257,25 +374,14 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
         </>
       )}
 
-      {step === "compat-warning" && (
-        <>
-          <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-provider")}>← Back</button>
-          <div className="pb2-error" style={{ background: "rgba(234,179,8,0.1)", borderColor: "rgba(234,179,8,0.4)", color: "#FDE68A" }}>
-            This product has {placeholderPositions.length} separate print areas ({placeholderPositions.join(", ")}).
-            Printsable currently only fills one of them, so the rest may print blank. Full support for
-            multi-area products like this is coming later.
-          </div>
-          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-            <button className="pb2-btn" onClick={() => setStep("pick-variants")}>Continue anyway</button>
-            <button className="pb2-btn pb2-btn-ghost" onClick={() => setStep("pick-blueprint")}>Choose a different product</button>
-          </div>
-        </>
-      )}
-
       {step === "pick-variants" && (
         <>
           <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-provider")}>← Back</button>
           <label className="pb2-label">Which sizes/colors to include?</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setSelectedVariantIds(variants.map((v) => v.id))}>Select all</button>
+            <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setSelectedVariantIds([])}>Clear</button>
+          </div>
           <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--panel-border)", borderRadius: 10, padding: 10 }}>
             {variants.map((v) => (
               <label key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0" }}>
@@ -341,13 +447,137 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
             })()}
           </div>
 
-          <button className="pb2-btn" style={{ marginTop: 14 }} disabled={selectedVariantIds.length === 0} onClick={createProduct}>
+          <button className="pb2-btn" style={{ marginTop: 14 }} disabled={selectedVariantIds.length === 0} onClick={goToPlacements}>
+            Next: place your artwork →
+          </button>
+        </>
+      )}
+
+      {step === "placements" && (
+        <>
+          <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-variants")}>← Back</button>
+          <label className="pb2-label">Place your artwork</label>
+          <p className="pb2-hint" style={{ marginTop: 0 }}>
+            Each box below is a separate spot on "{selectedBlueprintTitle}". Add an image or text to the spots you want — any spot left empty stays blank.
+          </p>
+
+          {printAreas.length === 0 ? (
+            <div className="pb2-card" style={{ boxShadow: "none" }}>
+              <p className="pb2-hint" style={{ margin: 0 }}>
+                Printify didn't report separate print areas for this product, so your main design will go in the default spot.
+              </p>
+            </div>
+          ) : (
+            printAreas.map((area) => {
+              const assigned = placements[area.position];
+              const ratio = area.width && area.height ? area.width / area.height : 1;
+              return (
+                <div key={area.position} style={{ border: "1px solid var(--panel-border)", borderRadius: 12, padding: 12, marginTop: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: 15 }}>{areaLabel(area.position)}</strong>
+                    <span className="pb2-hint">
+                      {area.width && area.height ? `${area.width} × ${area.height} px · ${shapeHint(area)}` : "size not provided"}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div
+                      style={{
+                        width: 120, aspectRatio: ratio, maxHeight: 170, borderRadius: 8,
+                        border: assigned ? "1px solid var(--panel-border)" : "1px dashed var(--muted)",
+                        display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+                        ...(assigned ? checkerStyle : {}),
+                      }}
+                    >
+                      {assigned ? (
+                        <img src={assigned.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      ) : (
+                        <span className="pb2-hint">Empty</span>
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 170 }}>
+                      <div className="pb2-hint">
+                        {assigned ? `Printing here: ${assigned.label}` : "Nothing will print here."}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                        {design?.image_url && (
+                          <button
+                            className="pb2-btn pb2-btn-ghost"
+                            style={{ fontSize: 11, padding: "5px 8px" }}
+                            onClick={() => assign(area.position, design.image_url, brand?.brand_name || "Main design")}
+                          >
+                            Use main design
+                          </button>
+                        )}
+                        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => openPicker(area.position)}>
+                          My library
+                        </button>
+                        <button
+                          className="pb2-btn pb2-btn-ghost"
+                          style={{ fontSize: 11, padding: "5px 8px" }}
+                          onClick={() => { setEditingArea(area); setStep("editing-area"); }}
+                        >
+                          {assigned ? "Edit / add text" : "Create here (text & images)"}
+                        </button>
+                        {assigned && (
+                          <button
+                            className="pb2-btn pb2-btn-ghost"
+                            style={{ fontSize: 11, padding: "5px 8px", color: "var(--red)" }}
+                            onClick={() => clearArea(area.position)}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {pickerFor === area.position && (
+                    <div style={{ marginTop: 12, borderTop: "1px solid var(--panel-border)", paddingTop: 12 }}>
+                      <div className="pb2-hint" style={{ marginBottom: 8 }}>Pick an image for {areaLabel(area.position)}:</div>
+                      {libraryLoading ? (
+                        <p className="pb2-hint">Loading your library…</p>
+                      ) : library.items.length === 0 ? (
+                        <p className="pb2-hint">Nothing in your library yet — upload images in My Assets first.</p>
+                      ) : (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                          {library.items.map((item) => (
+                            <button
+                              key={item.key}
+                              onClick={() => assign(area.position, item.image_url, item.label)}
+                              style={{ background: "none", border: "1px solid var(--panel-border)", borderRadius: 8, padding: 4, cursor: "pointer", color: "var(--ink)" }}
+                            >
+                              <img src={item.image_url} alt={item.label} style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 4, ...checkerStyle }} />
+                              <div className="pb2-hint" style={{ fontSize: 10, marginTop: 2, wordBreak: "break-word" }}>{item.label}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <button className="pb2-btn pb2-btn-ghost" style={{ marginTop: 8, fontSize: 12, padding: "6px 10px" }} onClick={() => setPickerFor(null)}>
+                        Close
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+
+          {printAreas.length > 0 && (
+            <p className="pb2-hint" style={{ marginTop: 14 }}>
+              {Object.keys(placements).length} of {printAreas.length} print area{printAreas.length === 1 ? "" : "s"} will have artwork.
+              {" "}Selling price: ${parseFloat(finalPriceDollars || "0").toFixed(2)} per item.
+            </p>
+          )}
+
+          <button className="pb2-btn" style={{ marginTop: 10 }} onClick={createProduct}>
             Create draft product
           </button>
         </>
       )}
 
-      {step === "creating" && <p>Creating your product on Printify…</p>}
+      {step === "creating" && <p>Creating your product on Printify… this can take a little longer when there's artwork on several areas.</p>}
 
       {step === "done" && (
         <>
@@ -356,17 +586,29 @@ export default function PushToPrintify({ brand, design, sourceType = "design", o
           </p>
           {createdProduct?.images?.length > 0 && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-              {createdProduct.images.slice(0, 4).map((img, i) => (
+              {createdProduct.images.slice(0, 6).map((img, i) => (
                 <img key={i} src={img.src || img} alt="" style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
               ))}
             </div>
           )}
+
+          {placedSummary.length > 0 && (
+            <div className="pb2-card" style={{ boxShadow: "none" }}>
+              <div className="pb2-section-label">What went where</div>
+              <ul style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 18, margin: 0 }}>
+                {placedSummary.map((p) => (
+                  <li key={p.position}><strong>{areaLabel(p.position)}:</strong> {p.label}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="pb2-card" style={{ background: "rgba(34,211,238,0.06)", borderColor: "var(--accent2)" }}>
             <div className="pb2-section-label">Where to find this in Printify</div>
             <ol style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 18, margin: 0 }}>
               <li>Open printify.com and log into your account (same account you connected here).</li>
               <li>Click <strong>My Products</strong> in the left menu.</li>
-              <li>Click the <strong>Drafts</strong> tab — your product "{brand.brand_name}" will be there.</li>
+              <li>Click the <strong>Drafts</strong> tab — your product "{brand?.brand_name}" will be there.</li>
               <li>Open it to see full mockups, edit placement, or publish it to a store.</li>
             </ol>
           </div>
