@@ -14,37 +14,106 @@ exports.handler = async (event) => {
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
-  const { shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url, title, description, price_cents, source_type } = body;
+  const {
+    shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url,
+    placements, title, description, price_cents, source_type,
+  } = body;
 
-  if (!shop_id || !blueprint_id || !print_provider_id || !variant_ids?.length || !image_url) {
+  const requested = Array.isArray(placements)
+    ? placements.filter((p) => p && p.position && p.image_url)
+    : [];
+
+  if (!shop_id || !blueprint_id || !print_provider_id || !variant_ids?.length || (!image_url && requested.length === 0)) {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields to create a product." }) };
   }
 
   const finalPrice = Number.isInteger(price_cents) && price_cents > 0 ? price_cents : 2000;
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  const safeTitle = (title || "design").replace(/[^a-zA-Z0-9-_]+/g, "-");
 
   try {
-    // Printify accepts either a public web address ("url") or raw
-    // base64 image data ("contents"). Our images are stored as embedded
-    // data (starting with "data:"), so we send those as "contents".
-    const uploadPayload = { file_name: `${(title || "design").replace(/[^a-zA-Z0-9-_]+/g, "-")}.png` };
-    if (image_url.startsWith("data:")) {
-      uploadPayload.contents = image_url.split(",")[1];
+    // Step 1: ask Printify which print areas this exact product has,
+    // including their sizes, for the sizes/colors the user selected.
+    const variantsResp = await fetch(
+      `${BASE}/catalog/blueprints/${blueprint_id}/print_providers/${print_provider_id}/variants.json`,
+      { headers }
+    );
+    if (!variantsResp.ok) {
+      throw new Error("Could not look up this product's print areas from Printify.");
+    }
+    const variantsData = await variantsResp.json();
+    const selected = (variantsData.variants || []).filter((v) => variant_ids.includes(v.id));
+
+    let common = null;
+    for (const v of selected) {
+      const list = (v.placeholders || []).filter((p) => p.position);
+      common = common === null ? list : common.filter((p) => list.some((q) => q.position === p.position));
+    }
+    common = common || [];
+    const areaByPosition = {};
+    common.forEach((a) => { areaByPosition[a.position] = a; });
+    const availablePositions = common.map((a) => a.position);
+
+    // Step 2: decide which areas get which image.
+    let toPlace;
+    if (requested.length > 0) {
+      const invalid = availablePositions.length
+        ? requested.filter((p) => !areaByPosition[p.position])
+        : [];
+      if (invalid.length) {
+        throw new Error(
+          `These print areas don't exist for every size/color you selected: ${invalid.map((p) => p.position).join(", ")}. ` +
+          `Available: ${availablePositions.join(", ") || "none found"}.`
+        );
+      }
+      toPlace = requested;
     } else {
-      uploadPayload.url = image_url;
+      const position = availablePositions.length
+        ? (availablePositions.includes("front") ? "front" : availablePositions[0])
+        : "front";
+      toPlace = [{ position, image_url }];
     }
 
-    const uploadResp = await fetch(`${BASE}/uploads/images.json`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(uploadPayload),
+    // Step 3: upload each distinct image to Printify once, all at the same time.
+    const uniqueUrls = [...new Set(toPlace.map((p) => p.image_url))];
+    const uploadedByUrl = {};
+    await Promise.all(
+      uniqueUrls.map(async (url, index) => {
+        const payload = { file_name: `${safeTitle}-${index + 1}.png` };
+        if (url.startsWith("data:")) {
+          payload.contents = url.split(",")[1];
+        } else {
+          payload.url = url;
+        }
+        const resp = await fetch(`${BASE}/uploads/images.json`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`Printify rejected an image upload: ${errText}`);
+        }
+        uploadedByUrl[url] = await resp.json();
+      })
+    );
+
+    // Step 4: build one placeholder per area. Scale each image so it fits
+    // inside its area (never cropped), using Printify's reported sizes.
+    const placeholders = toPlace.map((p) => {
+      const uploaded = uploadedByUrl[p.image_url];
+      const area = areaByPosition[p.position];
+      let scale = 1;
+      if (area?.width && area?.height && uploaded?.width && uploaded?.height) {
+        scale = Math.min(1, (area.height / area.width) * (uploaded.width / uploaded.height));
+      }
+      return {
+        position: p.position,
+        images: [{ id: uploaded.id, x: 0.5, y: 0.5, scale: Number(scale.toFixed(4)), angle: 0 }],
+      };
     });
-    if (!uploadResp.ok) {
-      const errText = await uploadResp.text();
-      throw new Error(`Printify rejected the image upload: ${errText}`);
-    }
-    const uploaded = await uploadResp.json();
 
+    // Step 5: create the draft product.
     const productResp = await fetch(`${BASE}/shops/${shop_id}/products.json`, {
       method: "POST",
       headers,
@@ -54,26 +123,26 @@ exports.handler = async (event) => {
         blueprint_id,
         print_provider_id,
         variants: variant_ids.map((id) => ({ id, price: finalPrice, is_enabled: true })),
-        print_areas: [
-          {
-            variant_ids,
-            placeholders: [
-              { position: "front", images: [{ id: uploaded.id, x: 0.5, y: 0.5, scale: 1, angle: 0 }] },
-            ],
-          },
-        ],
+        print_areas: [{ variant_ids, placeholders }],
       }),
     });
 
     if (!productResp.ok) {
       const errText = await productResp.text();
-      throw new Error(`Printify rejected the product: ${errText}`);
+      throw new Error(
+        `Printify rejected the product (areas tried: ${toPlace.map((p) => p.position).join(", ")}; ` +
+        `areas available: ${availablePositions.length ? availablePositions.join(", ") : "none found"}): ${errText}`
+      );
     }
     const product = await productResp.json();
     const images = (product.images || []).map((img) => img.src).filter(Boolean);
 
     const productRow = {
-      user_id: user.id, provider: "printify", provider_product_id: product.id, status: "draft", images,
+      user_id: user.id,
+      provider: "printify",
+      provider_product_id: product.id,
+      status: "draft",
+      images,
       price_cents: finalPrice,
     };
     if (source_type === "asset") {
@@ -82,8 +151,6 @@ exports.handler = async (event) => {
       productRow.design_id = design_id;
     }
     await supabaseAdmin.from("products").insert([productRow]);
-
-
 
     return { statusCode: 200, body: JSON.stringify({ product }) };
   } catch (err) {
