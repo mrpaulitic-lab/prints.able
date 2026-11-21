@@ -131,6 +131,7 @@ function AuthenticatedApp() {
             brand={pushTarget.brand}
             design={pushTarget.design}
             sourceType={pushTarget.sourceType}
+            session={session}
             onDone={() => { setTab(pushTarget.brand?.id ? "dashboard" : "assets"); setDashboardKey((k) => k + 1); }}
             onNeedsConnection={() => setTab("connect")}
           />
