@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
-import DesignEditor, { checkerStyle } from "./DesignEditor";
+import DesignEditor from "./DesignEditor";
+import LibraryPicker from "./LibraryPicker";
+import { checkerStyle } from "./checker";
 
 const PAGE_SIZE = 30;
 
@@ -11,8 +13,18 @@ async function authedFetch(path, body) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
     body: JSON.stringify(body || {}),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
+  let data = {};
+  const rawText = await res.text();
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    data = { error: `The server sent an unreadable reply (status ${res.status}).` };
+  }
+  if (!res.ok) {
+    throw new Error(
+      data.error || data.errorMessage || `Request failed (status ${res.status}). The server may have timed out or crashed.`
+    );
+  }
   return data;
 }
 
@@ -26,6 +38,14 @@ function shapeHint(area) {
   if (ratio > 1.3) return "wide";
   if (ratio < 0.77) return "tall";
   return "roughly square";
+}
+
+function money(cents) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function moneyRange(min, max) {
+  return min === max ? money(min) : `${money(min)} – ${money(max)}`;
 }
 
 export default function PushToPrintify({ brand, design, sourceType = "design", session, onDone, onNeedsConnection }) {
@@ -42,44 +62,20 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
   const [providerId, setProviderId] = useState(null);
   const [variants, setVariants] = useState([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState([]);
-  const [costDollars, setCostDollars] = useState("");
-  const [costTouched, setCostTouched] = useState(false);
   const [marginPercent, setMarginPercent] = useState("40");
-  const [finalPriceDollars, setFinalPriceDollars] = useState("");
-  const [priceTouched, setPriceTouched] = useState(false);
+  const [manualPrice, setManualPrice] = useState("");
   const [createdProduct, setCreatedProduct] = useState(null);
   const [placements, setPlacements] = useState({});
   const [editingArea, setEditingArea] = useState(null);
   const [pickerFor, setPickerFor] = useState(null);
-  const [library, setLibrary] = useState({ loaded: false, items: [] });
-  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [copyFor, setCopyFor] = useState(null);
+  const [copyTargets, setCopyTargets] = useState([]);
   const [placedSummary, setPlacedSummary] = useState([]);
+  const [priceSummary, setPriceSummary] = useState("");
 
   useEffect(() => {
     loadShops();
   }, []);
-
-  // Auto-fill the cost from Printify's own data, using the first selected
-  // size/color as the reference. Different options can cost slightly
-  // different amounts, so this is a starting point you can override.
-  useEffect(() => {
-    if (costTouched) return;
-    if (selectedVariantIds.length === 0) return;
-    const firstSelected = variants.find((v) => v.id === selectedVariantIds[0]);
-    if (firstSelected && typeof firstSelected.cost === "number") {
-      setCostDollars((firstSelected.cost / 100).toFixed(2));
-    }
-  }, [selectedVariantIds, variants, costTouched]);
-
-  useEffect(() => {
-    if (priceTouched) return;
-    const cost = parseFloat(costDollars);
-    const margin = parseFloat(marginPercent);
-    // True gross margin, not simple markup: price = cost / (1 - margin).
-    if (!isNaN(cost) && !isNaN(margin) && margin < 100) {
-      setFinalPriceDollars((cost / (1 - margin / 100)).toFixed(2));
-    }
-  }, [costDollars, marginPercent, priceTouched]);
 
   async function loadShops() {
     setError("");
@@ -115,7 +111,6 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
     setBlueprintId(bpId);
     setSelectedBlueprintTitle(bpTitle);
     setSelectedVariantIds([]);
-    setCostTouched(false);
     setPlacements({});
     setStep("loading-catalog");
     try {
@@ -157,13 +152,29 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
     printAreas = common || [];
   }
 
+  // Pricing comes straight from Printify's cost for each size/color.
+  // One profit margin is applied to all of them: price = cost / (1 - margin).
+  const hasCosts = selectedVariants.length > 0 && selectedVariants.every((v) => typeof v.cost === "number");
+  const marginNum = parseFloat(marginPercent);
+  const marginValid = !isNaN(marginNum) && marginNum >= 0 && marginNum <= 90;
+  function priceCentsFor(v) {
+    return Math.ceil(v.cost / (1 - marginNum / 100));
+  }
+
+  let pricingSummary = null;
+  if (hasCosts && marginValid) {
+    const costs = selectedVariants.map((v) => v.cost);
+    const prices = selectedVariants.map((v) => priceCentsFor(v));
+    const profits = selectedVariants.map((v) => priceCentsFor(v) - v.cost);
+    pricingSummary = {
+      minCost: Math.min(...costs), maxCost: Math.max(...costs),
+      minPrice: Math.min(...prices), maxPrice: Math.max(...prices),
+      minProfit: Math.min(...profits), maxProfit: Math.max(...profits),
+    };
+  }
+
   function goToPlacements() {
     setError("");
-    const price = parseFloat(finalPriceDollars || "0");
-    if (!price || price <= 0) {
-      setError("Enter a valid selling price before continuing.");
-      return;
-    }
     setPlacements((prev) => {
       const next = {};
       for (const area of printAreas) {
@@ -192,37 +203,36 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
     });
   }
 
-  async function openPicker(position) {
-    setPickerFor(position);
-    if (library.loaded) return;
-    setLibraryLoading(true);
-    try {
-      const { data: designData } = await supabase
-        .from("designs").select("*").order("created_at", { ascending: false }).limit(40);
-      const { data: assetData } = await supabase
-        .from("assets").select("*").order("created_at", { ascending: false }).limit(40);
-
-      const items = [];
-      for (const d of designData || []) {
-        if (d.image_url) items.push({ key: `d-${d.id}`, label: d.label || "Design", image_url: d.image_url });
-      }
-      for (const a of assetData || []) {
-        const { data: signed } = await supabase.storage.from("assets").createSignedUrl(a.storage_path, 3600);
-        if (signed?.signedUrl) items.push({ key: `a-${a.id}`, label: a.filename, image_url: signed.signedUrl });
-      }
-      setLibrary({ loaded: true, items });
-    } finally {
-      setLibraryLoading(false);
-    }
+  function applyCopy(fromPosition) {
+    const source = placements[fromPosition];
+    if (!source) return;
+    setPlacements((prev) => {
+      const next = { ...prev };
+      copyTargets.forEach((position) => { next[position] = { ...source }; });
+      return next;
+    });
+    setCopyFor(null);
+    setCopyTargets([]);
   }
 
   async function createProduct() {
     setError("");
-    const priceCents = Math.round(parseFloat(finalPriceDollars || "0") * 100);
-    if (!priceCents || priceCents <= 0) {
-      setError("Enter a valid selling price before creating the product.");
-      setStep("pick-variants");
-      return;
+
+    let variantPrices = null;
+    let fallbackPriceCents = null;
+    if (hasCosts) {
+      if (!marginValid) {
+        setError("Enter a profit margin between 0 and 90%.");
+        return;
+      }
+      variantPrices = {};
+      selectedVariants.forEach((v) => { variantPrices[v.id] = priceCentsFor(v); });
+    } else {
+      fallbackPriceCents = Math.round(parseFloat(manualPrice || "0") * 100);
+      if (!fallbackPriceCents || fallbackPriceCents <= 0) {
+        setError("Enter a selling price before creating the product.");
+        return;
+      }
     }
 
     const assigned = Object.entries(placements)
@@ -247,10 +257,17 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
         placements: assigned.map(({ position, image_url }) => ({ position, image_url })),
         title: brand?.brand_name || "Untitled product",
         description: brand?.mission || "",
-        price_cents: priceCents,
+        variant_prices: variantPrices || undefined,
+        price_cents: fallbackPriceCents || undefined,
       });
       setCreatedProduct(result.product);
       setPlacedSummary(assigned.map(({ position, label }) => ({ position, label })));
+      if (variantPrices) {
+        const all = Object.values(variantPrices);
+        setPriceSummary(moneyRange(Math.min(...all), Math.max(...all)));
+      } else {
+        setPriceSummary(money(fallbackPriceCents));
+      }
       setStep("done");
     } catch (err) {
       setError(err.message);
@@ -378,11 +395,14 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
         <>
           <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-provider")}>← Back</button>
           <label className="pb2-label">Which sizes/colors to include?</label>
+          <p className="pb2-hint" style={{ marginTop: 0 }}>
+            Printify's cost for each option is shown on the right. You'll set your profit margin on the last step.
+          </p>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setSelectedVariantIds(variants.map((v) => v.id))}>Select all</button>
             <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setSelectedVariantIds([])}>Clear</button>
           </div>
-          <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--panel-border)", borderRadius: 10, padding: 10 }}>
+          <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--panel-border)", borderRadius: 10, padding: 10 }}>
             {variants.map((v) => (
               <label key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0" }}>
                 <input
@@ -394,57 +414,10 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
                 />
                 {v.title}
                 {typeof v.cost === "number" && (
-                  <span className="pb2-hint" style={{ marginLeft: "auto" }}>Printify cost: ${(v.cost / 100).toFixed(2)}</span>
+                  <span className="pb2-hint" style={{ marginLeft: "auto" }}>Printify cost: {money(v.cost)}</span>
                 )}
               </label>
             ))}
-          </div>
-
-          <div style={{ marginTop: 20, borderTop: "1px solid var(--panel-border)", paddingTop: 16 }}>
-            <div className="pb2-section-label">Pricing</div>
-            <label className="pb2-label">What Printify charges you per item ($)</label>
-            <input
-              className="pb2-input"
-              type="number"
-              step="0.01"
-              placeholder="e.g. 12.50"
-              value={costDollars}
-              onChange={(e) => { setCostDollars(e.target.value); setCostTouched(true); }}
-            />
-            <p className="pb2-hint">
-              {selectedVariantIds.length > 0 && variants.find((v) => v.id === selectedVariantIds[0] && typeof v.cost === "number")
-                ? "Auto-filled from Printify's real cost for your first selected option — edit if you've chosen multiple sizes with different costs."
-                : "Select a size/color above to auto-fill this, or enter it yourself."}
-            </p>
-
-            <label className="pb2-label">Your target profit margin (%)</label>
-            <input className="pb2-input" type="number" step="1" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
-
-            <label className="pb2-label">Your selling price ($)</label>
-            <input
-              className="pb2-input"
-              type="number"
-              step="0.01"
-              value={finalPriceDollars}
-              onChange={(e) => { setFinalPriceDollars(e.target.value); setPriceTouched(true); }}
-            />
-            <p className="pb2-hint">Suggested from true gross margin (cost ÷ (1 − margin)) — edit it directly any time.</p>
-
-            {(() => {
-              const cost = parseFloat(costDollars);
-              const price = parseFloat(finalPriceDollars);
-              if (isNaN(cost) || isNaN(price) || price <= 0) return null;
-              const profit = price - cost;
-              const actualMargin = (profit / price) * 100;
-              return (
-                <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
-                  Estimated gross profit: <strong style={{ color: "var(--ink)" }}>${profit.toFixed(2)}</strong> per item
-                  {" — "}actual gross margin at this price: <strong style={{ color: "var(--ink)" }}>{actualMargin.toFixed(1)}%</strong>
-                  <br />
-                  <span style={{ fontStyle: "italic" }}>Estimate only — doesn't include shipping or payment processing fees.</span>
-                </div>
-              );
-            })()}
           </div>
 
           <button className="pb2-btn" style={{ marginTop: 14 }} disabled={selectedVariantIds.length === 0} onClick={goToPlacements}>
@@ -458,7 +431,8 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
           <button className="pb2-btn pb2-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setStep("pick-variants")}>← Back</button>
           <label className="pb2-label">Place your artwork</label>
           <p className="pb2-hint" style={{ marginTop: 0 }}>
-            Each box below is a separate spot on "{selectedBlueprintTitle}". Add an image or text to the spots you want — any spot left empty stays blank.
+            Each box below is a separate spot on "{selectedBlueprintTitle}". Add artwork to the spots you want — any spot left empty stays blank.
+            To put several images (and text) in one spot, use "Create here" and add as many as you like.
           </p>
 
           {printAreas.length === 0 ? (
@@ -471,6 +445,7 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
             printAreas.map((area) => {
               const assigned = placements[area.position];
               const ratio = area.width && area.height ? area.width / area.height : 1;
+              const otherAreas = printAreas.filter((a) => a.position !== area.position);
               return (
                 <div key={area.position} style={{ border: "1px solid var(--panel-border)", borderRadius: 12, padding: 12, marginTop: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
@@ -510,7 +485,7 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
                             Use main design
                           </button>
                         )}
-                        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => openPicker(area.position)}>
+                        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 11, padding: "5px 8px" }} onClick={() => { setCopyFor(null); setPickerFor(area.position); }}>
                           My library
                         </button>
                         <button
@@ -518,8 +493,17 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
                           style={{ fontSize: 11, padding: "5px 8px" }}
                           onClick={() => { setEditingArea(area); setStep("editing-area"); }}
                         >
-                          {assigned ? "Edit / add text" : "Create here (text & images)"}
+                          {assigned ? "Edit / add images & text" : "Create here (images & text)"}
                         </button>
+                        {assigned && otherAreas.length > 0 && (
+                          <button
+                            className="pb2-btn pb2-btn-ghost"
+                            style={{ fontSize: 11, padding: "5px 8px" }}
+                            onClick={() => { setPickerFor(null); setCopyTargets([]); setCopyFor(area.position); }}
+                          >
+                            Copy to…
+                          </button>
+                        )}
                         {assigned && (
                           <button
                             className="pb2-btn pb2-btn-ghost"
@@ -534,29 +518,41 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
                   </div>
 
                   {pickerFor === area.position && (
+                    <LibraryPicker
+                      title={`Pick an image for ${areaLabel(area.position)}`}
+                      onPick={(item) => assign(area.position, item.image_url, item.label)}
+                      onClose={() => setPickerFor(null)}
+                    />
+                  )}
+
+                  {copyFor === area.position && assigned && (
                     <div style={{ marginTop: 12, borderTop: "1px solid var(--panel-border)", paddingTop: 12 }}>
-                      <div className="pb2-hint" style={{ marginBottom: 8 }}>Pick an image for {areaLabel(area.position)}:</div>
-                      {libraryLoading ? (
-                        <p className="pb2-hint">Loading your library…</p>
-                      ) : library.items.length === 0 ? (
-                        <p className="pb2-hint">Nothing in your library yet — upload images in My Assets first.</p>
-                      ) : (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8, maxHeight: 220, overflowY: "auto" }}>
-                          {library.items.map((item) => (
-                            <button
-                              key={item.key}
-                              onClick={() => assign(area.position, item.image_url, item.label)}
-                              style={{ background: "none", border: "1px solid var(--panel-border)", borderRadius: 8, padding: 4, cursor: "pointer", color: "var(--ink)" }}
-                            >
-                              <img src={item.image_url} alt={item.label} style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 4, ...checkerStyle }} />
-                              <div className="pb2-hint" style={{ fontSize: 10, marginTop: 2, wordBreak: "break-word" }}>{item.label}</div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <button className="pb2-btn pb2-btn-ghost" style={{ marginTop: 8, fontSize: 12, padding: "6px 10px" }} onClick={() => setPickerFor(null)}>
-                        Close
-                      </button>
+                      <div className="pb2-hint" style={{ marginBottom: 8 }}>Also print "{assigned.label}" on:</div>
+                      {otherAreas.map((other) => (
+                        <label key={other.position} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0" }}>
+                          <input
+                            type="checkbox"
+                            checked={copyTargets.includes(other.position)}
+                            onChange={(e) =>
+                              setCopyTargets((prev) =>
+                                e.target.checked ? [...prev, other.position] : prev.filter((p) => p !== other.position)
+                              )
+                            }
+                          />
+                          {areaLabel(other.position)}
+                          {other.width && other.height && (
+                            <span className="pb2-hint" style={{ marginLeft: "auto" }}>{other.width} × {other.height} px</span>
+                          )}
+                        </label>
+                      ))}
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button className="pb2-btn" style={{ fontSize: 12, padding: "6px 12px" }} disabled={copyTargets.length === 0} onClick={() => applyCopy(area.position)}>
+                          Apply
+                        </button>
+                        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 12px" }} onClick={() => { setCopyFor(null); setCopyTargets([]); }}>
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -567,11 +563,58 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
           {printAreas.length > 0 && (
             <p className="pb2-hint" style={{ marginTop: 14 }}>
               {Object.keys(placements).length} of {printAreas.length} print area{printAreas.length === 1 ? "" : "s"} will have artwork.
-              {" "}Selling price: ${parseFloat(finalPriceDollars || "0").toFixed(2)} per item.
             </p>
           )}
 
-          <button className="pb2-btn" style={{ marginTop: 10 }} onClick={createProduct}>
+          <div style={{ marginTop: 20, borderTop: "1px solid var(--panel-border)", paddingTop: 16 }}>
+            <div className="pb2-section-label">Pricing</div>
+            {hasCosts ? (
+              <>
+                <p className="pb2-hint" style={{ marginTop: 0 }}>
+                  Printify's cost for each size/color is loaded automatically. Choose one profit margin and every option is priced from its own cost.
+                </p>
+                <label className="pb2-label">Profit margin (%)</label>
+                <input
+                  className="pb2-input"
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="90"
+                  value={marginPercent}
+                  onChange={(e) => setMarginPercent(e.target.value)}
+                />
+                {pricingSummary ? (
+                  <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.8 }}>
+                    <div><span className="pb2-hint">Printify cost: </span><strong>{moneyRange(pricingSummary.minCost, pricingSummary.maxCost)}</strong></div>
+                    <div><span className="pb2-hint">Your selling price: </span><strong>{moneyRange(pricingSummary.minPrice, pricingSummary.maxPrice)}</strong></div>
+                    <div><span className="pb2-hint">Estimated profit per item: </span><strong>{moneyRange(pricingSummary.minProfit, pricingSummary.maxProfit)}</strong></div>
+                    <div className="pb2-hint" style={{ fontStyle: "italic" }}>
+                      Estimate only — doesn't include shipping or payment processing fees.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pb2-hint" style={{ marginTop: 8 }}>Enter a margin between 0 and 90 to see prices.</div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="pb2-hint" style={{ marginTop: 0 }}>
+                  Printify didn't provide costs for this product, so enter one selling price for every option.
+                </p>
+                <label className="pb2-label">Selling price ($)</label>
+                <input
+                  className="pb2-input"
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 24.99"
+                  value={manualPrice}
+                  onChange={(e) => setManualPrice(e.target.value)}
+                />
+              </>
+            )}
+          </div>
+
+          <button className="pb2-btn" style={{ marginTop: 16 }} onClick={createProduct}>
             Create draft product
           </button>
         </>
@@ -590,6 +633,12 @@ export default function PushToPrintify({ brand, design, sourceType = "design", s
                 <img key={i} src={img.src || img} alt="" style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 8, border: "1px solid var(--panel-border)" }} />
               ))}
             </div>
+          )}
+
+          {priceSummary && (
+            <p style={{ fontSize: 13 }}>
+              <span className="pb2-hint">Selling price set to: </span><strong>{priceSummary}</strong>
+            </p>
           )}
 
           {placedSummary.length > 0 && (
