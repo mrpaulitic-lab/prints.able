@@ -1,15 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as fabric from "fabric";
 import { supabase } from "./supabaseClient";
-
-export const checkerStyle = {
-  backgroundColor: "#ffffff",
-  backgroundImage:
-    "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%)," +
-    "linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)",
-  backgroundSize: "16px 16px",
-  backgroundPosition: "0 0,0 8px,8px -8px,-8px 0",
-};
+import { checkerStyle } from "./checker";
+import LibraryPicker from "./LibraryPicker";
 
 const PREVIEW_BACKGROUNDS = [
   { name: "Clear", value: "checker" },
@@ -54,6 +47,40 @@ export default function DesignEditor({
   const [textColor, setTextColor] = useState("#000000");
   const [fontSize, setFontSize] = useState(() => Math.max(18, Math.round(size.width / 10)));
   const [fontFamily, setFontFamily] = useState("Arial");
+  const [showLibrary, setShowLibrary] = useState(false);
+
+  // Puts an image on the canvas, sized to fit, nudged slightly so
+  // several images added in a row don't sit exactly on top of each other.
+  function placeImage(img, fraction) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const count = canvas.getObjects().length;
+    const nudge = count === 0 ? 0 : ((count % 5) - 2) * 16;
+    const scale = Math.min((size.width * fraction) / img.width, (size.height * fraction) / img.height, 1);
+    img.set({
+      left: size.width / 2 + nudge,
+      top: size.height / 2 + nudge,
+      originX: "center",
+      originY: "center",
+      scaleX: scale,
+      scaleY: scale,
+    });
+    canvas.add(img);
+    canvas.setActiveObject(img);
+    canvas.renderAll();
+  }
+
+  // Downloads the image ourselves and loads it from a local blob address.
+  // This avoids a browser security restriction that otherwise blocks
+  // saving the canvas, especially on Safari/iPhone.
+  async function loadFromUrl(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("Could not download the image.");
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    objectUrlsRef.current.push(objectUrl);
+    return fabric.FabricImage.fromURL(objectUrl);
+  }
 
   useEffect(() => {
     const canvas = new fabric.Canvas(canvasElRef.current, {
@@ -63,34 +90,14 @@ export default function DesignEditor({
     });
     fabricRef.current = canvas;
 
-    async function loadImage() {
+    async function loadInitialImage() {
       if (!sourceImage) {
         setReady(true);
         return;
       }
       try {
-        // Download the image ourselves and load it from a local blob address.
-        // This avoids a browser security restriction that otherwise blocks
-        // saving the canvas, especially on Safari/iPhone.
-        const resp = await fetch(sourceImage);
-        if (!resp.ok) throw new Error("Could not download the image.");
-        const blob = await resp.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        objectUrlsRef.current.push(objectUrl);
-
-        const img = await fabric.FabricImage.fromURL(objectUrl);
-        const scale = Math.min((size.width * 0.9) / img.width, (size.height * 0.9) / img.height, 1);
-        img.set({
-          left: size.width / 2,
-          top: size.height / 2,
-          originX: "center",
-          originY: "center",
-          scaleX: scale,
-          scaleY: scale,
-        });
-        canvas.add(img);
-        canvas.setActiveObject(img);
-        canvas.renderAll();
+        const img = await loadFromUrl(sourceImage);
+        placeImage(img, 0.9);
       } catch (err) {
         console.error(err);
         setError("Could not load that image into the editor.");
@@ -99,7 +106,7 @@ export default function DesignEditor({
       }
     }
 
-    loadImage();
+    loadInitialImage();
 
     return () => {
       canvas.dispose();
@@ -127,7 +134,7 @@ export default function DesignEditor({
     canvas.renderAll();
   }
 
-  function addImageFromDevice(e) {
+  async function addImageFromDevice(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -140,29 +147,27 @@ export default function DesignEditor({
       return;
     }
     setError("");
-    const canvas = fabricRef.current;
-    if (!canvas) return;
-    const url = URL.createObjectURL(file);
-    objectUrlsRef.current.push(url);
-    fabric.FabricImage.fromURL(url)
-      .then((img) => {
-        const scale = Math.min((size.width * 0.6) / img.width, (size.height * 0.6) / img.height, 1);
-        img.set({
-          left: size.width / 2,
-          top: size.height / 2,
-          originX: "center",
-          originY: "center",
-          scaleX: scale,
-          scaleY: scale,
-        });
-        canvas.add(img);
-        canvas.setActiveObject(img);
-        canvas.renderAll();
-      })
-      .catch((err) => {
-        console.error(err);
-        setError("Could not add that image.");
-      });
+    try {
+      const url = URL.createObjectURL(file);
+      objectUrlsRef.current.push(url);
+      const img = await fabric.FabricImage.fromURL(url);
+      placeImage(img, 0.6);
+    } catch (err) {
+      console.error(err);
+      setError("Could not add that image.");
+    }
+  }
+
+  async function addImageFromLibrary(item) {
+    setShowLibrary(false);
+    setError("");
+    try {
+      const img = await loadFromUrl(item.image_url);
+      placeImage(img, 0.6);
+    } catch (err) {
+      console.error(err);
+      setError("Could not add that image.");
+    }
   }
 
   function applyToSelectedText(property, value) {
@@ -172,6 +177,20 @@ export default function DesignEditor({
       active.set(property, value);
       canvas.renderAll();
     }
+  }
+
+  function reorder(direction) {
+    const canvas = fabricRef.current;
+    const active = canvas?.getActiveObject();
+    if (!canvas || !active) return;
+    if (direction === "front") {
+      if (typeof canvas.bringObjectToFront === "function") canvas.bringObjectToFront(active);
+      else if (typeof active.bringToFront === "function") active.bringToFront();
+    } else {
+      if (typeof canvas.sendObjectToBack === "function") canvas.sendObjectToBack(active);
+      else if (typeof active.sendToBack === "function") active.sendToBack();
+    }
+    canvas.renderAll();
   }
 
   function deleteSelected() {
@@ -258,7 +277,7 @@ export default function DesignEditor({
         {areaName
           ? `The dashed box is the ${areaName} print area. Only what's inside the box will print.`
           : "Drag to move, corner handles to resize, the top handle to rotate."}
-        {" "}Crop isn't available yet.
+        {" "}Add as many images and text boxes as you like, then drag them into place. Crop isn't available yet.
       </p>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", margin: "10px 0" }}>
@@ -281,13 +300,27 @@ export default function DesignEditor({
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <button className="pb2-btn pb2-btn-ghost" onClick={addText}>+ Add Text</button>
         <label className="pb2-btn pb2-btn-ghost" style={{ display: "inline-block", cursor: "pointer" }}>
           + Add Image
           <input type="file" accept="image/png,image/jpeg,image/webp" onChange={addImageFromDevice} style={{ display: "none" }} />
         </label>
-        <button className="pb2-btn pb2-btn-ghost" onClick={deleteSelected}>Delete Selected</button>
+        <button className="pb2-btn pb2-btn-ghost" onClick={() => setShowLibrary((s) => !s)}>+ From My Library</button>
+      </div>
+
+      {showLibrary && (
+        <LibraryPicker
+          title="Add an image from your library"
+          onPick={addImageFromLibrary}
+          onClose={() => setShowLibrary(false)}
+        />
+      )}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "10px 0 14px" }}>
+        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => reorder("front")}>Bring to front</button>
+        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => reorder("back")}>Send to back</button>
+        <button className="pb2-btn pb2-btn-ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={deleteSelected}>Delete selected</button>
       </div>
 
       <div className="pb2-section-label">Text style (applies to the text you have selected)</div>
@@ -333,7 +366,7 @@ export default function DesignEditor({
         {saving ? "Saving…" : onSavedDesign ? "Use this artwork" : "Save as New Design"}
       </button>
       <p className="pb2-hint" style={{ marginTop: 8 }}>
-        Saving creates a new design — your original image or upload is never changed. The background stays transparent.
+        Saving creates a new design — your original images are never changed. The background stays transparent.
       </p>
     </div>
   );
