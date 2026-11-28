@@ -16,7 +16,7 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
   const {
     shop_id, blueprint_id, print_provider_id, variant_ids, design_id, image_url,
-    placements, title, description, price_cents, source_type,
+    placements, title, description, price_cents, variant_prices, source_type,
   } = body;
 
   const requested = Array.isArray(placements)
@@ -27,7 +27,14 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields to create a product." }) };
   }
 
-  const finalPrice = Number.isInteger(price_cents) && price_cents > 0 ? price_cents : 2000;
+  // Each size/color can have its own price (cost + the chosen margin).
+  // If none were sent, every option uses the single fallback price.
+  const fallbackPrice = Number.isInteger(price_cents) && price_cents > 0 ? price_cents : 2000;
+  function priceFor(id) {
+    const p = variant_prices ? variant_prices[id] : null;
+    return Number.isInteger(p) && p > 0 ? p : fallbackPrice;
+  }
+
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
   const safeTitle = (title || "design").replace(/[^a-zA-Z0-9-_]+/g, "-");
 
@@ -122,7 +129,7 @@ exports.handler = async (event) => {
         description: description || "",
         blueprint_id,
         print_provider_id,
-        variants: variant_ids.map((id) => ({ id, price: finalPrice, is_enabled: true })),
+        variants: variant_ids.map((id) => ({ id, price: priceFor(id), is_enabled: true })),
         print_areas: [{ variant_ids, placeholders }],
       }),
     });
@@ -137,13 +144,16 @@ exports.handler = async (event) => {
     const product = await productResp.json();
     const images = (product.images || []).map((img) => img.src).filter(Boolean);
 
+    // The storefront shows one price per product, so store the lowest one.
+    const lowestPrice = Math.min(...variant_ids.map((id) => priceFor(id)));
+
     const productRow = {
       user_id: user.id,
       provider: "printify",
       provider_product_id: product.id,
       status: "draft",
       images,
-      price_cents: finalPrice,
+      price_cents: lowestPrice,
     };
     if (source_type === "asset") {
       productRow.asset_id = design_id;
